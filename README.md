@@ -27,11 +27,17 @@ If you need a lightweight proxy that makes 250+ AI providers OpenAI-compatible, 
 ## Quickstart
 
 ```bash
-pnpm install
-pnpm dev
+pnpx lightport
 ```
 
 The gateway runs on `http://localhost:8787`.
+
+### From source
+
+```bash
+pnpm install
+pnpm dev
+```
 
 ### Make a request
 
