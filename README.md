@@ -16,9 +16,9 @@ Lightport accepts OpenAI-compatible requests, transforms them for the target pro
 
 ## Background
 
-Lightport started as a fork of [Portkey AI Gateway](https://github.com/portkey-ai/gateway). Our sole use case for the gateway has always been making AI providers OpenAI-compatible — we only needed the request/response transformation layer.
+Lightport started as a fork of [Portkey AI Gateway](https://github.com/portkey-ai/gateway). Our sole use case for the gateway has always been making AI providers OpenAI-compatible – we only needed the request/response transformation layer.
 
-Since then, Portkey has evolved into a full-featured AI gateway with guardrails, fallbacks, automatic retries, load balancing, request timeouts, smart caching, usage analytics, cost management, and more. We believe those capabilities belong at a higher abstraction level — which is what [Glama](https://glama.ai/ai/gateway) provides — rather than in the gateway itself.
+Since then, Portkey has evolved into a full-featured AI gateway with guardrails, fallbacks, automatic retries, load balancing, request timeouts, smart caching, usage analytics, cost management, and more. We believe those capabilities belong at a higher abstraction level – which is what [Glama](https://glama.ai/ai/gateway) provides – rather than in the gateway itself.
 
 Since forking, we have fixed numerous bugs, added integration tests for every provider, and continue to actively maintain the gateway as it directly powers [Glama](https://glama.ai/ai/gateway).
 
