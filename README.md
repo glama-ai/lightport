@@ -67,6 +67,22 @@ Some providers require additional headers:
 | Vertex AI    | `x-lightport-vertex-project-id`, `x-lightport-vertex-region`                                          |
 | Custom host  | `x-lightport-custom-host`                                                                             |
 
+### HTTP proxy
+
+Route provider requests through an HTTP proxy by setting the `x-lightport-proxy-url` header:
+
+```bash
+curl http://localhost:8787/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "x-lightport-provider: openai" \
+  -H "x-lightport-proxy-url: http://proxy.internal:8080" \
+  -H "Authorization: Bearer sk-YOUR-KEY" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
 ## Scripts
 
 ```bash

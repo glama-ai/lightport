@@ -14,6 +14,7 @@ export const HEADER_KEYS = {
   X_API_KEY: 'x-api-key',
   API_KEY: 'api-key',
   REQUEST_TIMEOUT: `x-${POWERED_BY}-request-timeout`,
+  PROXY_URL: `x-${POWERED_BY}-proxy-url`,
   STRICT_OPEN_AI_COMPLIANCE: `x-${POWERED_BY}-strict-open-ai-compliance`,
   CONTENT_TYPE: `Content-Type`,
   // W3C Trace Context headers (OpenTelemetry standard)

@@ -92,10 +92,6 @@ const nodeEnv = {
 
   GCP_AUTH_MODE: getValueOrFileContents(process.env.GCP_AUTH_MODE),
 
-  HTTP_PROXY: getValueOrFileContents(process.env.HTTP_PROXY),
-  HTTPS_PROXY: getValueOrFileContents(process.env.HTTPS_PROXY),
-  NO_PROXY: getValueOrFileContents(process.env.NO_PROXY),
-
   REQUEST_TIMEOUT: getValueOrFileContents(process.env.REQUEST_TIMEOUT),
 
   CORS_ALLOWED_ORIGINS: getValueOrFileContents(process.env.CORS_ALLOWED_ORIGINS),

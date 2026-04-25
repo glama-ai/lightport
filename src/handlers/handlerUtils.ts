@@ -243,6 +243,7 @@ export async function tryPost(
   // Make the request
   const requestTimeout =
     Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) || providerOption.requestTimeout || null;
+  const proxyUrl = requestHeaders[HEADER_KEYS.PROXY_URL] || undefined;
 
   let response: Response;
 
@@ -250,10 +251,11 @@ export async function tryPost(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), requestTimeout);
     try {
-      response = await externalServiceFetch(url, {
-        ...fetchOptions,
-        signal: controller.signal,
-      });
+      response = await externalServiceFetch(
+        url,
+        { ...fetchOptions, signal: controller.signal },
+        proxyUrl,
+      );
     } catch (err: any) {
       if (err.name === 'AbortError') {
         response = new Response(
@@ -269,7 +271,7 @@ export async function tryPost(
       clearTimeout(timeoutId);
     }
   } else {
-    response = await externalServiceFetch(url, fetchOptions);
+    response = await externalServiceFetch(url, fetchOptions, proxyUrl);
   }
 
   // Transform the response

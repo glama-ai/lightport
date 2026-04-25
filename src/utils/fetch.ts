@@ -1,7 +1,11 @@
-import { getExternalHttpsAgentForUrl } from '../agentStore';
+import { getHttpsAgent, getProxyAgent } from '../agentStore';
 
-export async function externalServiceFetch(url: string, options?: RequestInit) {
-  const agent = getExternalHttpsAgentForUrl(url);
+export async function externalServiceFetch(
+  url: string,
+  options?: RequestInit,
+  proxyUrl?: string,
+) {
+  const agent = proxyUrl ? getProxyAgent(proxyUrl) : getHttpsAgent();
   return fetch(url, {
     ...options,
     ...(agent ? { dispatcher: agent } : {}),
