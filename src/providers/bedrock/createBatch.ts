@@ -1,0 +1,100 @@
+import { BEDROCK } from '../../globals';
+import { transformUsingProviderConfig } from '../../services/transformToProviderRequest';
+import { Options } from '../../types/requestBody';
+import { constructConfigFromRequestHeaders } from '../../utils/request';
+import { CreateBatchRequest, CreateBatchResponse, ErrorResponse, ProviderConfig } from '../types';
+import { generateInvalidProviderResponseError } from '../utils';
+import { BedrockErrorResponseTransform } from './chatComplete';
+import { BedrockErrorResponse } from './embed';
+interface BedrockCreateBatchRequest extends CreateBatchRequest {
+  job_name?: string;
+  output_data_config?: {
+    s3Uri: string;
+  };
+  role_arn: string;
+}
+
+export const BedrockCreateBatchConfig: ProviderConfig = {
+  model: {
+    param: 'modelId',
+    required: true,
+  },
+  input_file_id: {
+    param: 'inputDataConfig',
+    required: true,
+    transform: (params: BedrockCreateBatchRequest) => {
+      return {
+        s3InputDataConfig: {
+          s3Uri: decodeURIComponent(params.input_file_id),
+        },
+      };
+    },
+  },
+  job_name: {
+    param: 'jobName',
+    required: true,
+    default: () => {
+      return `lightport-batch-job-${crypto.randomUUID()}`;
+    },
+  },
+  output_data_config: {
+    param: 'outputDataConfig',
+    required: true,
+    default: (params: BedrockCreateBatchRequest, providerOptions: Options) => {
+      const inputFileId = decodeURIComponent(params.input_file_id);
+      const s3URLToContainingFolder = inputFileId.split('/').slice(0, -1).join('/') + '/';
+      return {
+        s3OutputDataConfig: {
+          s3Uri: s3URLToContainingFolder,
+          ...(providerOptions.awsServerSideEncryptionKMSKeyId && {
+            s3EncryptionKeyId: providerOptions.awsServerSideEncryptionKMSKeyId,
+          }),
+        },
+      };
+    },
+  },
+  role_arn: {
+    param: 'roleArn',
+    required: true,
+  },
+};
+
+export const BedrockCreateBatchResponseTransform: (
+  response: CreateBatchResponse | BedrockErrorResponse,
+  responseStatus: number,
+) => CreateBatchResponse | ErrorResponse = (response, responseStatus) => {
+  if (responseStatus !== 200) {
+    const errorResponse = BedrockErrorResponseTransform(response as BedrockErrorResponse);
+    if (errorResponse) return errorResponse;
+  }
+
+  if ('jobArn' in response) {
+    return {
+      id: encodeURIComponent(response.jobArn as string),
+      object: 'batch',
+    };
+  }
+
+  return generateInvalidProviderResponseError(response, BEDROCK);
+};
+
+export const BedrockCreateRequestBodyTransform = (
+  requestBody: any,
+  requestHeaders: Record<string, string>,
+) => {
+  const providerOptions = constructConfigFromRequestHeaders(requestHeaders);
+
+  const baseConfig = transformUsingProviderConfig(
+    BedrockCreateBatchConfig,
+    requestBody,
+    providerOptions as Options,
+  );
+
+  const finalBody = {
+    // Contains extra fields like tags etc, also might contains model etc, so order is important to override the fields with params created using config.
+    ...requestBody?.provider_options,
+    ...baseConfig,
+  };
+
+  return finalBody;
+};

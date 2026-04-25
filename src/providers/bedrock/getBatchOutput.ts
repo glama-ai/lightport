@@ -1,0 +1,142 @@
+import { BEDROCK } from '../../globals';
+import { getOctetStreamToOctetStreamTransformer } from '../../handlers/streamHandlerUtils';
+import type { GatewayContext } from '../../types/GatewayContext';
+import { Options } from '../../types/requestBody';
+import { externalServiceFetch } from '../../utils/fetch';
+import { parseProviderErrorResponse } from '../utils/parseProviderErrorResponse';
+import { throwIfNotOk } from '../utils/throwIfNotOk';
+import BedrockAPIConfig from './api';
+import { BedrockGetBatchResponse } from './types';
+import { BedrockUploadFileResponseTransforms } from './uploadFileUtils';
+import { awsEndpointDomain, getBedrockFoundationModel, getRegionFromEnv } from './utils';
+
+const getModelProvider = (modelId: string) => {
+  let provider = '';
+  if (modelId.includes('llama2')) provider = 'llama2';
+  else if (modelId.includes('llama3')) provider = 'llama3';
+  else if (modelId.includes('titan')) provider = 'titan';
+  else if (modelId.includes('mistral')) provider = 'mistral';
+  else if (modelId.includes('anthropic')) provider = 'anthropic';
+  else if (modelId.includes('ai21')) provider = 'ai21';
+  else if (modelId.includes('cohere')) provider = 'cohere';
+  else if (modelId.includes('amazon')) provider = 'titan';
+  else throw new Error('Invalid model slug');
+  return provider;
+};
+
+const getRowTransform = (modelId: string) => {
+  const provider = getModelProvider(modelId);
+  return (row: Record<string, any>) => {
+    if (!row.modelOutput && row.error) return row.error;
+    const transformedResponse = BedrockUploadFileResponseTransforms[provider](row.modelOutput);
+    transformedResponse.model = modelId;
+    return {
+      id: row.modelOutput.id,
+      custom_id: row.recordId,
+      response: {
+        status_code: 200,
+        request_id: row.modelOutput.id,
+        body: transformedResponse,
+      },
+      error: null,
+    };
+  };
+};
+
+export const BedrockGetBatchOutputRequestHandler = async ({
+  c,
+  providerOptions,
+  requestURL,
+}: {
+  c: GatewayContext;
+  providerOptions: Options;
+  requestURL: string;
+}) => {
+  try {
+    // get s3 file id from batch details
+    // get file from s3
+    // return file
+    const baseUrl = await BedrockAPIConfig.getBaseURL({
+      providerOptions,
+      fn: 'retrieveBatch',
+      c,
+      gatewayRequestURL: requestURL,
+    });
+    const batchId = requestURL.split('/v1/batches/')[1].replace('/output', '');
+    const retrieveBatchURL = `${baseUrl}/model-invocation-job/${batchId}`;
+    const retrieveBatchesHeaders = await BedrockAPIConfig.headers({
+      c,
+      providerOptions,
+      fn: 'retrieveBatch',
+      transformedRequestBody: {},
+      transformedRequestUrl: retrieveBatchURL,
+      gatewayRequestBody: {},
+    });
+    const retrieveBatchesResponse = await externalServiceFetch(retrieveBatchURL, {
+      method: 'GET',
+      headers: retrieveBatchesHeaders,
+    });
+
+    await throwIfNotOk(retrieveBatchesResponse, BEDROCK);
+
+    const batchDetails: BedrockGetBatchResponse = await retrieveBatchesResponse.json();
+    const outputFileId = batchDetails.outputDataConfig.s3OutputDataConfig.s3Uri;
+
+    let awsRegion = providerOptions.awsRegion;
+    if (providerOptions.awsAuthType === 'serviceRole') {
+      awsRegion = providerOptions.awsRegion || getRegionFromEnv();
+    }
+    const awsS3Bucket = outputFileId.replace('s3://', '').split('/')[0];
+    const jobId = batchDetails.jobArn.split('/')[1];
+    const inputS3URIParts = batchDetails.inputDataConfig.s3InputDataConfig.s3Uri.split('/');
+
+    const primaryKey = outputFileId?.replace(`s3://${awsS3Bucket}/`, '') ?? '';
+
+    const awsS3ObjectKey = `${primaryKey}${jobId}/${inputS3URIParts[inputS3URIParts.length - 1]}.out`;
+    const awsModelProvider = await getBedrockFoundationModel(
+      batchDetails.modelId,
+      providerOptions,
+      {},
+    );
+    const s3FileURL = `https://${awsS3Bucket}.s3.${awsRegion}.${awsEndpointDomain}/${awsS3ObjectKey}`;
+    const s3FileHeaders = await BedrockAPIConfig.headers({
+      c,
+      providerOptions,
+      fn: 'retrieveFileContent',
+      transformedRequestBody: {},
+      transformedRequestUrl: s3FileURL,
+      gatewayRequestBody: {},
+    });
+    const s3FileResponse = await externalServiceFetch(s3FileURL, {
+      method: 'GET',
+      headers: s3FileHeaders,
+    });
+    let responseStream: ReadableStream;
+    if (
+      s3FileResponse.headers.get('content-type')?.includes('octet-stream') &&
+      s3FileResponse?.body
+    ) {
+      responseStream = s3FileResponse?.body?.pipeThrough(
+        getOctetStreamToOctetStreamTransformer(getRowTransform(awsModelProvider)),
+      );
+      return new Response(responseStream, {
+        headers: {
+          'content-type': 'application/octet-stream',
+        },
+      });
+    } else {
+      const body = await s3FileResponse.text();
+      throw new Error(body);
+    }
+  } catch (error: any) {
+    return parseProviderErrorResponse({
+      captureMessage: 'failed to parse Bedrock batch output error response',
+      error,
+      provider: BEDROCK,
+    });
+  }
+};
+
+export const BedrockGetBatchOutputResponseTransform = (response: Response) => {
+  return response;
+};
