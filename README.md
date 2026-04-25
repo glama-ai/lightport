@@ -75,7 +75,7 @@ Route provider requests through an HTTP proxy by setting the `x-lightport-proxy-
 curl http://localhost:8787/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "x-lightport-provider: openai" \
-  -H "x-lightport-proxy-url: http://proxy.internal:8080" \
+  -H "x-lightport-proxy-url: http://user:pass@proxy.internal:8080" \
   -H "Authorization: Bearer sk-YOUR-KEY" \
   -d '{
     "model": "gpt-4o-mini",
