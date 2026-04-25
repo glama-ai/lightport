@@ -1,10 +1,12 @@
 # Lightport
 
-A lightweight AI gateway that routes requests to 250+ LLMs.
+A lightweight transformation gateway that makes any LLM provider fully OpenAI-compatible.
 
-## What it does
+## Goal
 
-Lightport accepts OpenAI-compatible requests, transforms them for the target provider, and returns the response. No retries, no fallbacks, no caching, no auth layer – just a thin proxy with provider adapters.
+Lightport does one thing: it accepts OpenAI-compatible requests, transforms them for the target provider, and returns the response. That's it.
+
+Retries, secret management, caching, rate limiting, and other operational concerns are explicitly non-goals. Those are better handled either at a service layer above Lightport or as custom middleware.
 
 **Supported endpoints:**
 
