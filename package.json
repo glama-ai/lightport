@@ -1,6 +1,6 @@
 {
   "name": "lightport",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A lightweight AI gateway that routes requests to 250+ LLMs",
   "keywords": [
     "AI gateway",
