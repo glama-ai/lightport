@@ -1,0 +1,11 @@
+node_modules
+build
+dist
+.git
+.github
+.claude
+.cursor
+.DS_Store
+*.log
+.env
+.env.*
