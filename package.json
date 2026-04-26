@@ -9,6 +9,14 @@
     "Lightport AI",
     "OpenAI"
   ],
+  "homepage": "https://github.com/glama-ai/lightport#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/glama-ai/lightport.git"
+  },
+  "bugs": {
+    "url": "https://github.com/glama-ai/lightport/issues"
+  },
   "license": "MIT",
   "bin": "build/start-server.mjs",
   "files": [
