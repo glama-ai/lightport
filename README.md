@@ -126,7 +126,3 @@ The provider system (`src/providers/`) contains 77 provider implementations. Eac
 - API config (base URL, endpoints, headers)
 - Request parameter transforms
 - Response transforms (streaming + non-streaming)
-
-## License
-
-MIT
