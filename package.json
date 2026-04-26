@@ -1,6 +1,6 @@
 {
   "name": "lightport",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "A lightweight AI gateway that makes LLM providers OpenAI-compatible.",
   "keywords": [
     "AI gateway",
@@ -42,17 +42,6 @@
     "undici": "^8.1.0",
     "zod": "^4.3.6"
   },
-  "release": {
-    "branches": [
-      "main"
-    ],
-    "plugins": [
-      "@semantic-release/commit-analyzer",
-      "@semantic-release/release-notes-generator",
-      "@semantic-release/npm",
-      "@semantic-release/github"
-    ]
-  },
   "devDependencies": {
     "@types/minimist": "^1.2.5",
     "@types/node": "25.6.0",
@@ -67,5 +56,16 @@
     "tsx": "^4.7.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/npm",
+      "@semantic-release/github"
+    ]
   }
 }
