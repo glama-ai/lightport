@@ -9,21 +9,27 @@ import { logger } from './logger';
 import { captureException } from './sentry/captureException';
 import { Environment } from './utils/env';
 import bytes from 'bytes';
-import minimist from 'minimist';
 import { readFileSync } from 'node:fs';
 import tls from 'node:tls';
+import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
 
 const TIMEOUT = 15 * 60 * 1000; // 15 minutes
 const CLOSE_DELAY = 5_000;
 const FORCE_EXIT_TIMEOUT = 295_000;
 
-const argv = minimist(process.argv.slice(2), {
-  default: {
-    port: Number(Environment({}).PORT),
-    'body-size-limit': '10mb',
-  },
-  string: ['body-size-limit'],
-});
+const argv = yargs(hideBin(process.argv))
+  .option('port', {
+    type: 'number',
+    default: Number(Environment({}).PORT),
+    describe: 'Port to listen on',
+  })
+  .option('body-size-limit', {
+    type: 'string',
+    default: '10mb',
+    describe: 'Maximum request body size (e.g. 10mb, 1gb)',
+  })
+  .parseSync();
 
 const port = argv.port;
 const bodySizeLimit = bytes.parse(argv['body-size-limit']);
