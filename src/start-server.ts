@@ -8,6 +8,7 @@ import createApp from './index';
 import { logger } from './logger';
 import { captureException } from './sentry/captureException';
 import { Environment } from './utils/env';
+import bytes from 'bytes';
 import minimist from 'minimist';
 import { readFileSync } from 'node:fs';
 import tls from 'node:tls';
@@ -19,10 +20,18 @@ const FORCE_EXIT_TIMEOUT = 295_000;
 const argv = minimist(process.argv.slice(2), {
   default: {
     port: Number(Environment({}).PORT),
+    'body-size-limit': '10mb',
   },
+  string: ['body-size-limit'],
 });
 
 const port = argv.port;
+const bodySizeLimit = bytes.parse(argv['body-size-limit']);
+
+if (!bodySizeLimit) {
+  logger.error({ value: argv['body-size-limit'] }, 'invalid --body-size-limit value');
+  process.exit(1);
+}
 
 const tlsKeyPath = Environment({}).TLS_KEY_PATH;
 const tlsCertPath = Environment({}).TLS_CERT_PATH;
@@ -71,7 +80,7 @@ const httpsOpts =
 let status: 'running' | 'terminating' = 'running';
 let shutdownRequested = false;
 
-const app = createApp(httpsOpts as any, {
+const app = createApp({ ...httpsOpts, bodyLimit: bodySizeLimit } as any, {
   getStatus: () => status,
 });
 
