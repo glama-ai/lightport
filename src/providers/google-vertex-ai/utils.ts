@@ -360,6 +360,17 @@ export const transformGeminiToolParameters = (parameters: JsonSchema): JsonSchem
   const isNullTypeNode = (node: any): boolean =>
     node && typeof node === 'object' && node.type === 'null';
 
+  // JSON Schema allows a boolean in any schema position (`true` = any value is
+  // allowed, `false` = no value is allowed). Vertex's Schema proto requires an
+  // object there, so normalize `true` to a generic object (matching derefer's
+  // self-reference fallback) and flag `false` for removal by the caller.
+  const DROP_SCHEMA = Symbol('drop-schema');
+  const normalizeBooleanSchema = (node: any): any => {
+    if (node === true) return { type: 'object' };
+    if (node === false) return DROP_SCHEMA;
+    return node;
+  };
+
   const transformNode = (node: JsonSchema): JsonSchema => {
     if (Array.isArray(node)) {
       return node.map(transformNode);
@@ -370,8 +381,10 @@ export const transformGeminiToolParameters = (parameters: JsonSchema): JsonSchem
 
     for (const [key, value] of Object.entries(node)) {
       if ((key === 'anyOf' || key === 'oneOf') && Array.isArray(value)) {
-        const nonNullItems = value.filter((item) => !isNullTypeNode(item));
-        const hadNull = nonNullItems.length < value.length;
+        // Normalize boolean sub-schemas and drop `false` branches first.
+        const branches = value.map(normalizeBooleanSchema).filter((item) => item !== DROP_SCHEMA);
+        const nonNullItems = branches.filter((item) => !isNullTypeNode(item));
+        const hadNull = nonNullItems.length < branches.length;
 
         if (nonNullItems.length === 1 && hadNull) {
           // Flatten to single schema: get rid of anyOf/oneOf and set nullable: true
@@ -383,13 +396,54 @@ export const transformGeminiToolParameters = (parameters: JsonSchema): JsonSchem
           continue;
         }
 
-        transformed[key] = transformNode(hadNull ? nonNullItems : value);
+        transformed[key] = transformNode(hadNull ? nonNullItems : branches);
         if (hadNull) transformed.nullable = true;
+        continue;
+      }
+
+      // Vertex's Schema.enum is string[] regardless of the property type, so
+      // coerce non-string enum values (integers, booleans) to strings.
+      if (key === 'enum' && Array.isArray(value)) {
+        transformed[key] = value.map((entry) =>
+          typeof entry === 'string' ? entry : String(entry),
+        );
+        continue;
+      }
+
+      if (key === 'properties' && value && typeof value === 'object' && !Array.isArray(value)) {
+        const properties: JsonSchema = {};
+        for (const [propName, propSchema] of Object.entries(value)) {
+          const normalized = normalizeBooleanSchema(propSchema);
+          if (normalized === DROP_SCHEMA) continue; // `false`: property cannot be present
+          properties[propName] = transformNode(normalized);
+        }
+        transformed[key] = properties;
+        continue;
+      }
+
+      if (key === 'items') {
+        const normalized = normalizeBooleanSchema(value);
+        // `items: false` (no items permitted) is inexpressible; fall back to a generic object.
+        transformed[key] = transformNode(
+          normalized === DROP_SCHEMA ? { type: 'object' } : normalized,
+        );
         continue;
       }
 
       transformed[key] = transformNode(value);
     }
+
+    // A `false` sub-schema may have removed a property; keep `required` in sync.
+    if (
+      transformed.properties &&
+      typeof transformed.properties === 'object' &&
+      Array.isArray(transformed.required)
+    ) {
+      transformed.required = transformed.required.filter(
+        (name: string) => name in transformed.properties,
+      );
+    }
+
     return transformed;
   };
 

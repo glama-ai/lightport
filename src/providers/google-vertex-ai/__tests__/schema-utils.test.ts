@@ -1,4 +1,8 @@
-import { derefer, transformGeminiToolParameters } from '../utils';
+import {
+  derefer,
+  transformGeminiToolParameters,
+  recursivelyDeleteUnsupportedParameters,
+} from '../utils';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 
 vi.mock('../../../data-stores/redis', () => ({
@@ -610,5 +614,182 @@ describe('transformGeminiToolParameters', () => {
       'identity',
       'emergency_contacts',
     ]);
+  });
+});
+
+describe('transformGeminiToolParameters - Vertex dialect normalization', () => {
+  it('stringifies integer enum values (Vertex requires enum: string[])', () => {
+    const out = transformGeminiToolParameters({
+      type: 'integer',
+      enum: [1, 2, 3, 4, 5],
+    });
+    // type is intentionally left untouched
+    expect(out).toEqual({ type: 'integer', enum: ['1', '2', '3', '4', '5'] });
+  });
+
+  it('stringifies boolean enum values', () => {
+    const out = transformGeminiToolParameters({
+      type: 'boolean',
+      enum: [true, false],
+    });
+    expect(out.enum).toEqual(['true', 'false']);
+  });
+
+  it('leaves string enum values unchanged', () => {
+    const out = transformGeminiToolParameters({
+      type: 'string',
+      enum: ['a', 'b', 'c'],
+    });
+    expect(out.enum).toEqual(['a', 'b', 'c']);
+  });
+
+  it('stringifies enum nested inside array items', () => {
+    const out = transformGeminiToolParameters({
+      type: 'array',
+      items: { type: 'integer', enum: [10, 20] },
+    });
+    expect(out.items.enum).toEqual(['10', '20']);
+  });
+
+  it('converts a boolean `true` property sub-schema to a generic object', () => {
+    const out = transformGeminiToolParameters({
+      type: 'object',
+      properties: {
+        known: { type: 'string' },
+        anything: true,
+      },
+    });
+    expect(out.properties.known).toEqual({ type: 'string' });
+    expect(out.properties.anything).toEqual({ type: 'object' });
+  });
+
+  it('drops a boolean `false` property sub-schema and prunes it from required', () => {
+    const out = transformGeminiToolParameters({
+      type: 'object',
+      properties: {
+        keep: { type: 'string' },
+        forbidden: false,
+      },
+      required: ['keep', 'forbidden'],
+    });
+    expect(out.properties).toEqual({ keep: { type: 'string' } });
+    expect(out.required).toEqual(['keep']);
+  });
+
+  it('normalizes a boolean sub-schema used as array items', () => {
+    const out = transformGeminiToolParameters({
+      type: 'array',
+      items: true,
+    });
+    expect(out.items).toEqual({ type: 'object' });
+  });
+
+  it('drops `false` branches and normalizes `true` branches inside anyOf', () => {
+    const out = transformGeminiToolParameters({
+      anyOf: [{ type: 'string' }, false, { type: 'number' }],
+    });
+    expect(out.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+  });
+
+  it('handles a boolean sub-schema nested deep in arrays of objects (reported error path)', () => {
+    const out = transformGeminiToolParameters({
+      type: 'object',
+      properties: {
+        arr: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              known: { type: 'string' },
+              anything: true,
+            },
+          },
+        },
+      },
+    });
+    expect(out.properties.arr.items.properties.anything).toEqual({ type: 'object' });
+    expect(out.properties.arr.items.properties.known).toEqual({ type: 'string' });
+  });
+});
+
+describe('recursivelyDeleteUnsupportedParameters', () => {
+  it('strips boolean additionalProperties at the top level and when nested', () => {
+    const out = recursivelyDeleteUnsupportedParameters({
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        meta: { type: 'object', additionalProperties: true },
+      },
+    });
+    expect('additionalProperties' in out).toBe(false);
+    expect('additionalProperties' in out.properties.meta).toBe(false);
+    expect(out.properties.meta).toEqual({ type: 'object' });
+  });
+
+  it('strips object-form additionalProperties', () => {
+    const out = recursivelyDeleteUnsupportedParameters({
+      type: 'object',
+      properties: {
+        meta: { type: 'object', additionalProperties: { type: 'string' } },
+      },
+    });
+    expect('additionalProperties' in out.properties.meta).toBe(false);
+  });
+
+  it('strips $schema, strict, and unknown keywords', () => {
+    const out = recursivelyDeleteUnsupportedParameters({
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      strict: true,
+      type: 'object',
+      properties: {
+        a: { type: 'string', $comment: 'note', examples: ['x'] },
+      },
+    });
+    expect('$schema' in out).toBe(false);
+    expect('strict' in out).toBe(false);
+    expect('$comment' in out.properties.a).toBe(false);
+    expect('examples' in out.properties.a).toBe(false);
+    expect(out.properties.a).toEqual({ type: 'string' });
+  });
+});
+
+describe('full Vertex tool-parameter pipeline (chatComplete order)', () => {
+  // Mirrors src/providers/google-vertex-ai/chatComplete.ts tools transform.
+  const toVertexToolParams = (params: any) =>
+    recursivelyDeleteUnsupportedParameters(transformGeminiToolParameters(params));
+
+  it('fixes the reported repro: integer enum + boolean additionalProperties', () => {
+    const out = toVertexToolParams({
+      type: 'object',
+      properties: {
+        score: { type: 'integer', enum: [1, 2, 3, 4, 5] },
+        meta: { type: 'object', additionalProperties: true },
+      },
+    });
+    expect(out.properties.score).toEqual({
+      type: 'integer',
+      enum: ['1', '2', '3', '4', '5'],
+    });
+    expect(out.properties.meta).toEqual({ type: 'object' });
+  });
+
+  it('fixes the reported error path: boolean sub-schema as a property value', () => {
+    const out = toVertexToolParams({
+      type: 'object',
+      properties: {
+        arr: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              known: { type: 'string' },
+              anything: true,
+            },
+          },
+        },
+      },
+    });
+    expect(out.properties.arr.items.properties.anything).toEqual({ type: 'object' });
+    expect(out.properties.arr.items.properties.known).toEqual({ type: 'string' });
   });
 });
