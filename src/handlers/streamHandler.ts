@@ -27,8 +27,10 @@ function pipeToWriter(
 ): void {
   fn()
     .catch((err) => {
-      // Client disconnects reject with undefined
-      if (err !== undefined) {
+      // A caller hanging up rejects the writer with undefined, and aborts the
+      // provider fetch with an AbortError. Neither is a fault, and reporting
+      // either would page someone every time a client closes a tab.
+      if (err !== undefined && err?.name !== 'AbortError') {
         logger.error({ err }, 'stream transform error');
         captureException({ error: err, message: 'stream transform error' });
       }

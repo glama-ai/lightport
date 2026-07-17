@@ -258,34 +258,55 @@ export async function tryPost(
   const requestTimeout =
     Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) || providerOption.requestTimeout || null;
   const proxyUrl = requestHeaders[HEADER_KEYS.PROXY_URL] || undefined;
+  const clientAbortSignal = c.get('clientAbortSignal') as AbortSignal | undefined;
 
   let response: Response;
 
+  let timeoutController: AbortController | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
   if (requestTimeout) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), requestTimeout);
-    try {
-      response = await externalServiceFetch(
-        url,
-        { ...fetchOptions, signal: controller.signal },
-        proxyUrl,
-      );
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        response = new Response(
-          JSON.stringify({
-            error: { message: 'Request timed out', type: 'timeout_error' },
-          }),
-          { status: 408, headers: { 'content-type': 'application/json' } },
-        );
-      } else {
-        throw err;
-      }
-    } finally {
+    timeoutController = controller;
+    timeoutId = setTimeout(() => controller.abort(), requestTimeout);
+  }
+
+  // Aborting the fetch is what tears down the provider connection, and that is
+  // the only thing that stops a provider generating tokens the caller has
+  // already walked away from. It also covers the non-streaming case, where the
+  // gateway would otherwise sit waiting out a completion nobody will read.
+  const signals = [timeoutController?.signal, clientAbortSignal].filter(
+    (signal): signal is AbortSignal => Boolean(signal),
+  );
+
+  try {
+    response = await externalServiceFetch(
+      url,
+      { ...fetchOptions, ...(signals.length > 0 && { signal: AbortSignal.any(signals) }) },
+      proxyUrl,
+    );
+  } catch (err: any) {
+    if (err.name !== 'AbortError') {
+      throw err;
+    }
+
+    if (clientAbortSignal?.aborted) {
+      // There is nobody left to transform a response for, so skip the rest of
+      // the pipeline. 499 is nginx's convention for the caller hanging up, and
+      // keeps an ordinary disconnect out of the paths that page someone.
+      return new Response(null, { status: 499 });
+    }
+
+    response = new Response(
+      JSON.stringify({
+        error: { message: 'Request timed out', type: 'timeout_error' },
+      }),
+      { status: 408, headers: { 'content-type': 'application/json' } },
+    );
+  } finally {
+    if (timeoutId) {
       clearTimeout(timeoutId);
     }
-  } else {
-    response = await externalServiceFetch(url, fetchOptions, proxyUrl);
   }
 
   // Transform the response

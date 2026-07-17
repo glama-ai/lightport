@@ -88,12 +88,20 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // Node reports a vanished caller by destroying the socket rather than by
+        // throwing — write() merely returns false — so this has to be checked
+        // for. Without it the pump runs the whole stream into a dead socket.
+        if (raw.destroyed) break;
         raw.write(value);
       }
     } catch {
-      // Client disconnected
+      // Either the upstream stream failed, or the provider fetch was aborted
+      // because the caller went away. Nothing further can be written.
     } finally {
-      raw.end();
+      void reader.cancel().catch(() => {});
+      if (!raw.destroyed) {
+        raw.end();
+      }
     }
   };
 
@@ -123,6 +131,19 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
     return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
       return withRequestScope(async () => {
         const c = createGatewayContext(request, reply);
+
+        // A caller that hangs up mid-stream leaves the provider request running,
+        // and the provider goes on billing for every token it generates. Node
+        // signals this by destroying the socket, so there is no error to catch —
+        // it has to be watched for. tryPost wires this into the provider fetch,
+        // which is the only thing that actually stops the meter.
+        const callerGone = new AbortController();
+        reply.raw.once('close', () => {
+          if (!reply.raw.writableEnded) {
+            callerGone.abort();
+          }
+        });
+        c.set('clientAbortSignal', callerGone.signal);
 
         // Tagged from the headers first so that a body that fails to parse still
         // leaves an exception we can place. `tryPost` refines these once the
