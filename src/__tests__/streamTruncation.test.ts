@@ -36,32 +36,31 @@ afterEach(async () => {
   );
 });
 
-const TOTAL_CHUNKS = 3;
-
 /**
- * A provider whose connection drops partway through a completion — the ordinary
- * shape of an upstream reset. The caller has already been given a 200, so the
- * gateway cannot take it back; the only question is whether it admits the body
- * is incomplete or seals it up as if nothing happened.
+ * A provider streaming a completion, which the test ends on its own terms —
+ * either dropping the connection the way an upstream reset does, or finishing
+ * properly.
+ *
+ * The timing is driven rather than raced: the gateway holds its first chunk back
+ * by 25ms (streamHandler's readStream), so a provider that dies on a timer can
+ * beat the gateway's headers onto the wire and leave the caller with a bare
+ * connection error. That is also detectable, but it is not the case under test —
+ * the point here is a 200 that has already been committed.
  */
-const startProvider = async ({ truncate }: { truncate: boolean }) => {
+const startProvider = async () => {
+  const state: {
+    response?: http.ServerResponse;
+    socket?: import('node:net').Socket;
+    timer?: NodeJS.Timeout;
+  } = {};
+
   const server = http.createServer((request, response) => {
+    state.response = response;
+    state.socket = request.socket;
     response.writeHead(200, { 'content-type': 'text/event-stream' });
 
     let sent = 0;
-    const timer = setInterval(() => {
-      if (sent >= TOTAL_CHUNKS) {
-        clearInterval(timer);
-
-        if (truncate) {
-          request.socket.destroy();
-        } else {
-          response.end();
-        }
-
-        return;
-      }
-
+    state.timer = setInterval(() => {
       sent++;
       response.write(
         `data: ${JSON.stringify({
@@ -69,6 +68,8 @@ const startProvider = async ({ truncate }: { truncate: boolean }) => {
         })}\n\n`,
       );
     }, 10);
+
+    request.on('close', () => clearInterval(state.timer));
   });
 
   servers.push(server);
@@ -76,7 +77,27 @@ const startProvider = async ({ truncate }: { truncate: boolean }) => {
   const port = await getPort();
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
 
-  return { port };
+  return {
+    port,
+    /** The provider finishes the completion properly. */
+    finish: () => {
+      clearInterval(state.timer);
+      state.response?.end();
+    },
+    /** The provider's connection drops mid-completion. */
+    truncate: () => {
+      clearInterval(state.timer);
+      state.socket?.destroy();
+    },
+  };
+};
+
+/** Drains a reader to completion, surfacing whatever the stream errors with. */
+const drain = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+  while (true) {
+    const { done } = await reader.read();
+    if (done) return;
+  }
 };
 
 const callGateway = async (providerPort: number) => {
@@ -103,26 +124,39 @@ const callGateway = async (providerPort: number) => {
 
 describe('upstream stream truncation', () => {
   it('does not hand the caller a truncated body framed as a complete one', async () => {
-    const provider = await startProvider({ truncate: true });
+    const provider = await startProvider();
     const response = await callGateway(provider.port);
 
-    // The status line went out before the provider died, so 200 is expected and
-    // cannot be revised. Everything rests on how the body is terminated.
     expect(response.status).toBe(200);
 
-    // Reading the body has to fail. If it resolves, the gateway has written the
-    // terminating chunk over a truncated completion and the caller has no way of
-    // knowing the tokens simply stop early.
-    await expect(response.text()).rejects.toThrow();
+    const reader = response.body!.getReader();
+
+    // Take a chunk before killing the provider, so the 200 and part of the body
+    // are provably on the wire. Only then can the gateway no longer revise the
+    // status, which is the whole predicament under test.
+    const first = await reader.read();
+
+    expect(new TextDecoder().decode(first.value)).toContain('tok-');
+
+    provider.truncate();
+
+    // Draining the rest has to fail. If it ends cleanly the gateway has written
+    // the terminating chunk over a half-finished completion, and the caller has
+    // no way of knowing the tokens simply stop early.
+    await expect(drain(reader)).rejects.toThrow();
   }, 20_000);
 
   it('reports a truncation the caller was made to suffer', async () => {
-    const provider = await startProvider({ truncate: true });
+    const provider = await startProvider();
     const response = await callGateway(provider.port);
+    const reader = response.body!.getReader();
 
-    await response.text().catch(() => {
+    await reader.read();
+    provider.truncate();
+    await drain(reader).catch(() => {
       // Expected; asserted above.
     });
+
     await Sentry.flush(2_000);
 
     const captured = events.map((event) => event.exception?.values?.[0]?.value);
@@ -131,16 +165,21 @@ describe('upstream stream truncation', () => {
   }, 20_000);
 
   it('still delivers an intact stream cleanly', async () => {
-    const provider = await startProvider({ truncate: false });
+    const provider = await startProvider();
     const response = await callGateway(provider.port);
 
     expect(response.status).toBe(200);
 
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+
+    expect(new TextDecoder().decode(first.value)).toContain('tok-');
+
+    provider.finish();
+
     // The guard against overcorrecting: a healthy stream must still terminate
     // normally and report nothing.
-    const body = await response.text();
-
-    expect(body).toContain(`tok-${TOTAL_CHUNKS}`);
+    await expect(drain(reader)).resolves.toBeUndefined();
 
     await Sentry.flush(2_000);
 
