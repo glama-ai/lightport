@@ -5,6 +5,7 @@
  */
 
 import { version } from '../package.json';
+import { getClientAbortSignal, runWithClientAbort } from './context/clientAbort';
 import { HEADER_KEYS } from './globals';
 import { chatCompletionsHandler } from './handlers/chatCompletionsHandler';
 import { completionsHandler } from './handlers/completionsHandler';
@@ -19,6 +20,7 @@ import type { GatewayContext } from './types/GatewayContext';
 import { getCORSValues } from './utils';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
+import { once } from 'node:events';
 import type { FastifyRequest, FastifyReply, FastifyHttpsOptions } from 'fastify';
 
 type AppLifecycle = {
@@ -76,6 +78,13 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
     reply.hijack();
 
     const raw = reply.raw;
+
+    // Nothing below can reach a caller who has already gone, and writing to a
+    // destroyed response only invites an error event on a socket nobody owns.
+    if (raw.destroyed) {
+      return;
+    }
+
     raw.writeHead(response.status, Object.fromEntries(response.headers));
 
     if (!response.body) {
@@ -83,7 +92,10 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
       return;
     }
 
+    const callerGone = getClientAbortSignal();
     const reader = response.body.getReader();
+    let truncated = false;
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -92,14 +104,46 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
         // throwing — write() merely returns false — so this has to be checked
         // for. Without it the pump runs the whole stream into a dead socket.
         if (raw.destroyed) break;
-        raw.write(value);
+
+        // write() also returns false once the socket's buffer is full, and a
+        // caller reading slower than the provider writes would otherwise have
+        // its whole completion queued in memory. Waiting for drain paces the
+        // pump against the socket; the caller's signal is what releases the wait
+        // if they disappear rather than catch up.
+        if (!raw.write(value) && !raw.destroyed) {
+          try {
+            await once(raw, 'drain', callerGone ? { signal: callerGone } : {});
+          } catch {
+            break;
+          }
+        }
       }
-    } catch {
-      // Either the upstream stream failed, or the provider fetch was aborted
-      // because the caller went away. Nothing further can be written.
+    } catch (err) {
+      truncated = true;
+
+      // A hangup is not a fault: the gateway aborted the provider on the
+      // caller's behalf, which surfaces as an AbortError, and a cancelled writer
+      // rejects with undefined. Anything else is a genuine failure, and it is
+      // reported here because this is where it becomes the caller's problem.
+      const causedByHangup = err === undefined || (err as { name?: string })?.name === 'AbortError';
+
+      if (!causedByHangup) {
+        logger.error({ err }, 'response stream truncated');
+        captureException({ error: err, message: 'response stream truncated' });
+      }
     } finally {
       void reader.cancel().catch(() => {});
-      if (!raw.destroyed) {
+
+      if (raw.destroyed) {
+        // The caller is already gone; there is nobody left to signal.
+      } else if (truncated) {
+        // The status line and headers went out long before the failure, so they
+        // cannot be revised. Hanging up without writing the terminating chunk is
+        // the only remaining way to tell the caller their body is incomplete —
+        // end() here would frame a half-finished completion as a whole one, and
+        // no caller could tell the difference.
+        raw.destroy();
+      } else {
         raw.end();
       }
     }
@@ -135,42 +179,43 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
         // A caller that hangs up mid-stream leaves the provider request running,
         // and the provider goes on billing for every token it generates. Node
         // signals this by destroying the socket, so there is no error to catch —
-        // it has to be watched for. tryPost wires this into the provider fetch,
-        // which is the only thing that actually stops the meter.
+        // it has to be watched for. externalServiceFetch picks the signal up
+        // from here, which is the only thing that actually stops the meter.
         const callerGone = new AbortController();
         reply.raw.once('close', () => {
           if (!reply.raw.writableEnded) {
             callerGone.abort();
           }
         });
-        c.set('clientAbortSignal', callerGone.signal);
 
-        // Tagged from the headers first so that a body that fails to parse still
-        // leaves an exception we can place. `tryPost` refines these once the
-        // provider and model are resolved rather than merely requested.
-        setRequestTags({
-          provider: request.headers[HEADER_KEYS.PROVIDER],
-          route: request.routeOptions.url,
-          traceId: request.headers[HEADER_KEYS.TRACE_ID],
+        return runWithClientAbort(callerGone.signal, async () => {
+          // Tagged from the headers first so that a body that fails to parse
+          // still leaves an exception we can place. `tryPost` refines these once
+          // the provider and model are resolved rather than merely requested.
+          setRequestTags({
+            provider: request.headers[HEADER_KEYS.PROVIDER],
+            route: request.routeOptions.url,
+            traceId: request.headers[HEADER_KEYS.TRACE_ID],
+          });
+
+          await parseBody(request, c);
+
+          const { bodyJSON } = c.get('requestBodyData');
+
+          setRequestTags({
+            model: bodyJSON?.model,
+            stream: Boolean(bodyJSON?.stream),
+          });
+
+          const validationResponse = requestValidator(c);
+          if (validationResponse instanceof Response) {
+            await sendWebResponse(reply, validationResponse);
+            return;
+          }
+
+          const response = await handler(c);
+          await sendWebResponse(reply, response);
         });
-
-        await parseBody(request, c);
-
-        const { bodyJSON } = c.get('requestBodyData');
-
-        setRequestTags({
-          model: bodyJSON?.model,
-          stream: Boolean(bodyJSON?.stream),
-        });
-
-        const validationResponse = requestValidator(c);
-        if (validationResponse instanceof Response) {
-          await sendWebResponse(reply, validationResponse);
-          return;
-        }
-
-        const response = await handler(c);
-        await sendWebResponse(reply, response);
       });
     };
   };

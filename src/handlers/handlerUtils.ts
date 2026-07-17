@@ -1,3 +1,4 @@
+import { getClientAbortSignal } from '../context/clientAbort';
 import { GatewayError } from '../errors/GatewayError';
 import { HEADER_KEYS, POWERED_BY, RESPONSE_HEADER_KEYS, CONTENT_TYPES } from '../globals';
 import Providers from '../providers';
@@ -75,6 +76,31 @@ export async function tryPost(
   requestHeaders: Record<string, string>,
   fn: endpointStrings,
   method: string = 'POST',
+): Promise<Response> {
+  try {
+    return await postToProvider(c, providerOption, requestBody, requestHeaders, fn, method);
+  } catch (err) {
+    // Once the caller has hung up the gateway aborts the provider on their
+    // behalf, and everything downstream of that — the fetch, the body read
+    // inside responseHandler, the transform — fails as a consequence rather
+    // than a fault. Nobody is waiting for a response, and reporting it would
+    // page someone for a closed tab. 499 is nginx's convention for the caller
+    // going away.
+    if (getClientAbortSignal()?.aborted) {
+      return new Response(null, { status: 499 });
+    }
+
+    throw err;
+  }
+}
+
+async function postToProvider(
+  c: GatewayContext,
+  providerOption: Options,
+  requestBody: Params | FormData | ArrayBuffer | ReadableStream,
+  requestHeaders: Record<string, string>,
+  fn: endpointStrings,
+  method: string,
 ): Promise<Response> {
   const overrideParams = providerOption?.overrideParams || {};
   let params: Params =
@@ -258,10 +284,11 @@ export async function tryPost(
   const requestTimeout =
     Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) || providerOption.requestTimeout || null;
   const proxyUrl = requestHeaders[HEADER_KEYS.PROXY_URL] || undefined;
-  const clientAbortSignal = c.get('clientAbortSignal') as AbortSignal | undefined;
 
   let response: Response;
 
+  // The caller's own signal reaches the fetch through externalServiceFetch, so
+  // only the timeout needs wiring here.
   let timeoutController: AbortController | null = null;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -271,18 +298,10 @@ export async function tryPost(
     timeoutId = setTimeout(() => controller.abort(), requestTimeout);
   }
 
-  // Aborting the fetch is what tears down the provider connection, and that is
-  // the only thing that stops a provider generating tokens the caller has
-  // already walked away from. It also covers the non-streaming case, where the
-  // gateway would otherwise sit waiting out a completion nobody will read.
-  const signals = [timeoutController?.signal, clientAbortSignal].filter(
-    (signal): signal is AbortSignal => Boolean(signal),
-  );
-
   try {
     response = await externalServiceFetch(
       url,
-      { ...fetchOptions, ...(signals.length > 0 && { signal: AbortSignal.any(signals) }) },
+      { ...fetchOptions, ...(timeoutController && { signal: timeoutController.signal }) },
       proxyUrl,
     );
   } catch (err: any) {
@@ -290,11 +309,11 @@ export async function tryPost(
       throw err;
     }
 
-    if (clientAbortSignal?.aborted) {
-      // There is nobody left to transform a response for, so skip the rest of
-      // the pipeline. 499 is nginx's convention for the caller hanging up, and
-      // keeps an ordinary disconnect out of the paths that page someone.
-      return new Response(null, { status: 499 });
+    // Both the timeout and the caller hanging up surface as an AbortError, so
+    // they have to be told apart. A hangup is left to propagate to tryPost's
+    // guard rather than being dressed up as a timeout nobody asked about.
+    if (getClientAbortSignal()?.aborted) {
+      throw err;
     }
 
     response = new Response(

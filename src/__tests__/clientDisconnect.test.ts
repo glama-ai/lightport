@@ -1,10 +1,27 @@
 import createApp from '../index';
+import type { ErrorEvent } from '@sentry/core';
+import * as Sentry from '@sentry/node-core/light';
 import getPort from 'get-port';
 import http from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const apps: Array<ReturnType<typeof createApp>> = [];
 const servers: http.Server[] = [];
+const events: ErrorEvent[] = [];
+
+beforeAll(() => {
+  Sentry.init({
+    beforeSend: (event) => {
+      events.push(event);
+      return null;
+    },
+    dsn: 'https://public@example.invalid/1',
+  });
+});
+
+beforeEach(() => {
+  events.length = 0;
+});
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
@@ -109,6 +126,49 @@ describe('client disconnect', () => {
     expect(provider.state.chunksSent - sentWhenCallerLeft).toBeLessThan(10);
   }, 20_000);
 
+  it('stays quiet when the caller leaves before the provider answers', async () => {
+    // The disconnect-before-headers path, which returns 499 from tryPost and is
+    // reached by no other test. Everything downstream of the abort — the fetch,
+    // the body read, sendWebResponse — fails as a consequence, and none of it is
+    // a fault worth waking anyone for.
+    const silent = http.createServer(() => {
+      // Never responds.
+    });
+    servers.push(silent);
+    const silentPort = await getPort();
+    await new Promise<void>((resolve) => silent.listen(silentPort, '127.0.0.1', resolve));
+
+    const gatewayPort = await getPort();
+    const app = createApp();
+    apps.push(app);
+    await app.listen({ host: '127.0.0.1', port: gatewayPort });
+
+    const caller = new AbortController();
+
+    const pending = fetch(`http://127.0.0.1:${gatewayPort}/v1/chat/completions`, {
+      body: JSON.stringify({ messages: [{ content: 'hi', role: 'user' }], model: 'gpt-4o' }),
+      headers: {
+        authorization: 'Bearer sk-not-a-real-key',
+        'content-type': 'application/json',
+        'x-lightport-custom-host': `http://127.0.0.1:${silentPort}`,
+        'x-lightport-provider': 'openai',
+      },
+      method: 'POST',
+      signal: caller.signal,
+    }).catch(() => {
+      // The caller aborts itself; the rejection is the point.
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    caller.abort();
+    await pending;
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await Sentry.flush(2_000);
+
+    expect(events.map((event) => event.exception?.values?.[0]?.value)).toEqual([]);
+  }, 20_000);
+
   it('still reports a provider timeout as a timeout, not a disconnect', async () => {
     // The caller's abort signal now shares a fetch with the timeout's, so the
     // two have to stay distinguishable. Note requestTimeout only bounds
@@ -142,6 +202,51 @@ describe('client disconnect', () => {
     expect(await response.json()).toMatchObject({
       error: { type: 'timeout_error' },
     });
+  }, 20_000);
+
+  it('stays quiet when the caller leaves mid-body on a non-streaming request', async () => {
+    // anthropic has a chatComplete transform, so responseHandler parses the body
+    // — unlike openai, which passes it straight through. That parse is what the
+    // caller's abort interrupts, and it happens well after the fetch has
+    // resolved, so it is not covered by any guard around the fetch itself.
+    const slowBody = http.createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.write('{"content":[{"type":"text","text":"partial');
+      // Body never completes; the caller gives up first.
+    });
+    servers.push(slowBody);
+    const bodyPort = await getPort();
+    await new Promise<void>((resolve) => slowBody.listen(bodyPort, '127.0.0.1', resolve));
+
+    const gatewayPort = await getPort();
+    const app = createApp();
+    apps.push(app);
+    await app.listen({ host: '127.0.0.1', port: gatewayPort });
+
+    const caller = new AbortController();
+
+    const pending = fetch(`http://127.0.0.1:${gatewayPort}/v1/chat/completions`, {
+      body: JSON.stringify({ messages: [{ content: 'hi', role: 'user' }], model: 'claude-3' }),
+      headers: {
+        authorization: 'Bearer sk-not-a-real-key',
+        'content-type': 'application/json',
+        'x-lightport-custom-host': `http://127.0.0.1:${bodyPort}`,
+        'x-lightport-provider': 'anthropic',
+      },
+      method: 'POST',
+      signal: caller.signal,
+    }).catch(() => {
+      // The caller aborts itself; the rejection is the point.
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    caller.abort();
+    await pending;
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await Sentry.flush(2_000);
+
+    expect(events.map((event) => event.exception?.values?.[0]?.value)).toEqual([]);
   }, 20_000);
 
   it('still streams a full response through to a caller that stays', async () => {

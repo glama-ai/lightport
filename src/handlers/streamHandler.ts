@@ -10,6 +10,7 @@ import {
   PRECONDITION_CHECK_FAILED_STATUS_CODE,
   GOOGLE_VERTEX_AI,
 } from '../globals';
+import { getClientAbortSignal } from '../context/clientAbort';
 import { logger } from '../logger';
 import { VertexLlamaChatCompleteStreamChunkTransform } from '../providers/google-vertex-ai/chatComplete';
 import { OpenAIChatCompleteResponse } from '../providers/openai/chatComplete';
@@ -25,23 +26,43 @@ function pipeToWriter(
   fn: () => Promise<void>,
   writer: WritableStreamDefaultWriter<Uint8Array>,
 ): void {
-  fn()
-    .catch((err) => {
-      // A caller hanging up rejects the writer with undefined, and aborts the
-      // provider fetch with an AbortError. Neither is a fault, and reporting
-      // either would page someone every time a client closes a tab.
-      if (err !== undefined && err?.name !== 'AbortError') {
-        logger.error({ err }, 'stream transform error');
-        captureException({ error: err, message: 'stream transform error' });
-      }
-    })
-    .finally(async () => {
+  fn().then(
+    async () => {
       try {
         if (writer.desiredSize !== null) await writer.close();
       } catch {
         // Writer may already be closed if the readable side was cancelled
       }
-    });
+    },
+    async (err) => {
+      // A caller hanging up rejects the writer with undefined, and aborts the
+      // provider fetch with an AbortError. Neither is a fault.
+      const causedByHangup = err === undefined || err?.name === 'AbortError';
+
+      if (!causedByHangup) {
+        logger.error({ err }, 'stream transform error');
+
+        // sendWebResponse reports any truncation that reaches a live caller, and
+        // it sees this error too — via the abort below. But once the caller has
+        // gone its loop has already stopped reading, so a genuine fault raised
+        // after that point would go unseen anywhere else.
+        if (getClientAbortSignal()?.aborted) {
+          captureException({ error: err, message: 'stream transform error' });
+        }
+      }
+
+      // Abort rather than close. Closing ends the readable side normally, which
+      // is indistinguishable from a completed stream — sendWebResponse would go
+      // on to terminate the caller's chunked body and frame a half-finished
+      // completion as a whole one. Aborting propagates the failure to the only
+      // place that can still tell the caller about it.
+      try {
+        await writer.abort(err);
+      } catch {
+        // Writer may already be errored or closed
+      }
+    },
+  );
 }
 
 function readUInt32BE(buffer: Uint8Array, offset: number) {
