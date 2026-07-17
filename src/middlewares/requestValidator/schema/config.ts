@@ -1,4 +1,11 @@
-import { AZURE_OPEN_AI, OLLAMA, VALID_PROVIDERS, GOOGLE_VERTEX_AI, TRITON } from '../../../globals';
+import {
+  AZURE_OPEN_AI,
+  OLLAMA,
+  VALID_PROVIDERS,
+  GOOGLE_VERTEX_AI,
+  TRITON,
+  HEADER_KEYS,
+} from '../../../globals';
 import type { GatewayContext } from '../../../types/GatewayContext';
 import { Environment } from '../../../utils/env';
 import { z } from 'zod';
@@ -158,7 +165,15 @@ export const configSchema: any = z
     targets: z.array(z.lazy(() => configSchema)).optional(),
     request_timeout: z.number().optional(),
     custom_host: z.string().optional(),
-    forward_headers: z.array(z.string()).optional(),
+    forward_headers: z
+      .array(z.string())
+      .refine(
+        (headers) => !headers.some((h) => h.trim().toLowerCase() === HEADER_KEYS.FORWARD_HEADERS),
+        {
+          message: `forward_headers must not contain the '${HEADER_KEYS.FORWARD_HEADERS}' header`,
+        },
+      )
+      .optional(),
     // Google Vertex AI specific
     vertex_project_id: z.string().optional(),
     vertex_region: z.string().optional(),

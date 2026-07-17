@@ -1,4 +1,4 @@
-import { CONTENT_TYPES, POWERED_BY, VALID_PROVIDERS } from '../../globals';
+import { CONTENT_TYPES, HEADER_KEYS, POWERED_BY, VALID_PROVIDERS } from '../../globals';
 import { captureException } from '../../sentry/captureException';
 import type { GatewayContext } from '../../types/GatewayContext';
 import { parseJson } from '../../utils/parseJson';
@@ -67,6 +67,28 @@ export const requestValidator = (c: GatewayContext): Response | null => {
       JSON.stringify({
         status: 'failure',
         message: `Invalid custom host`,
+      }),
+      {
+        status: 400,
+        headers: {
+          'content-type': 'application/json',
+        },
+      },
+    );
+  }
+
+  // Forwarding the forward-headers header itself would make every downstream hop
+  // re-forward it, so a custom host pointing back at the gateway loops forever.
+  const forwardHeadersHeader = requestHeaders[HEADER_KEYS.FORWARD_HEADERS];
+  if (
+    forwardHeadersHeader
+      ?.split(',')
+      .some((h: string) => h.trim().toLowerCase() === HEADER_KEYS.FORWARD_HEADERS)
+  ) {
+    return new Response(
+      JSON.stringify({
+        status: 'failure',
+        message: `forward_headers must not contain the '${HEADER_KEYS.FORWARD_HEADERS}' header`,
       }),
       {
         status: 400,
