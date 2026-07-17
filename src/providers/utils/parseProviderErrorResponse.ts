@@ -22,7 +22,7 @@ export const parseProviderErrorResponse = ({
     errorResponse = parseJson<Record<string, any>>(error.message);
     errorResponse.provider = provider;
   } catch (parseError) {
-    captureException({ error: parseError, message: captureMessage });
+    captureException({ error: parseError, message: captureMessage, tags: { provider } });
     errorResponse = {
       error: {
         message: (parseError as Error).message,

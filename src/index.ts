@@ -5,6 +5,7 @@
  */
 
 import { version } from '../package.json';
+import { HEADER_KEYS } from './globals';
 import { chatCompletionsHandler } from './handlers/chatCompletionsHandler';
 import { completionsHandler } from './handlers/completionsHandler';
 import modelResponsesHandler from './handlers/modelResponsesHandler';
@@ -12,6 +13,8 @@ import { logger } from './logger';
 import { parseBody } from './middlewares/lightport';
 import { requestValidator } from './middlewares/requestValidator';
 import { captureException } from './sentry/captureException';
+import { setRequestTags } from './sentry/setRequestTags';
+import { withRequestScope } from './sentry/withRequestScope';
 import type { GatewayContext } from './types/GatewayContext';
 import { getCORSValues } from './utils';
 import cors from '@fastify/cors';
@@ -118,17 +121,36 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
 
   const handleRoute = (handler: (c: GatewayContext) => Promise<Response>): any => {
     return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-      const c = createGatewayContext(request, reply);
-      await parseBody(request, c);
+      return withRequestScope(async () => {
+        const c = createGatewayContext(request, reply);
 
-      const validationResponse = requestValidator(c);
-      if (validationResponse instanceof Response) {
-        await sendWebResponse(reply, validationResponse);
-        return;
-      }
+        // Tagged from the headers first so that a body that fails to parse still
+        // leaves an exception we can place. `tryPost` refines these once the
+        // provider and model are resolved rather than merely requested.
+        setRequestTags({
+          provider: request.headers[HEADER_KEYS.PROVIDER],
+          route: request.routeOptions.url,
+          traceId: request.headers[HEADER_KEYS.TRACE_ID],
+        });
 
-      const response = await handler(c);
-      await sendWebResponse(reply, response);
+        await parseBody(request, c);
+
+        const { bodyJSON } = c.get('requestBodyData');
+
+        setRequestTags({
+          model: bodyJSON?.model,
+          stream: Boolean(bodyJSON?.stream),
+        });
+
+        const validationResponse = requestValidator(c);
+        if (validationResponse instanceof Response) {
+          await sendWebResponse(reply, validationResponse);
+          return;
+        }
+
+        const response = await handler(c);
+        await sendWebResponse(reply, response);
+      });
     };
   };
 

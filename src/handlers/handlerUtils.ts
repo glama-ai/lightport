@@ -2,6 +2,7 @@ import { GatewayError } from '../errors/GatewayError';
 import { HEADER_KEYS, POWERED_BY, RESPONSE_HEADER_KEYS, CONTENT_TYPES } from '../globals';
 import Providers from '../providers';
 import { ProviderAPIConfig, endpointStrings } from '../providers/types';
+import { setRequestTags } from '../sentry/setRequestTags';
 import transformToProviderRequest from '../services/transformToProviderRequest';
 import type { GatewayContext } from '../types/GatewayContext';
 import { Options, Params } from '../types/requestBody';
@@ -113,6 +114,19 @@ export async function tryPost(
     adapterCtx = adapterResult.adapterCtx;
     strictOpenAiCompliance = false;
   }
+
+  // Refines the tags `handleRoute` derived from headers. `provider` is the one
+  // resolved from the config, which is the only accurate value when a config
+  // carries `targets` and never names a provider in a header. `originalFn` is
+  // the endpoint the caller asked for, since `fn` becomes chatComplete once an
+  // adapter takes over.
+  setRequestTags({
+    adapted: adapterCtx.isActive,
+    endpoint: adapterCtx.originalFn,
+    model: params.model,
+    provider,
+    stream: isStreamingMode,
+  });
 
   // Mapping providers to corresponding URLs
   const providerConfig = Providers[provider];
