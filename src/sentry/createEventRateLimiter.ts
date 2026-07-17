@@ -60,10 +60,7 @@ export const createEventRateLimiter = ({
     }
   };
 
-  return (
-    event: ErrorEvent,
-    _hint: EventHint,
-  ): ErrorEvent | null | PromiseLike<ErrorEvent | null> => {
+  return (event: ErrorEvent, _hint: EventHint): ErrorEvent | null => {
     const now = Date.now();
 
     if (now - globalWindowStart >= windowMs) {
