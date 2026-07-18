@@ -43,6 +43,11 @@ export const initializeSentry = () => {
           captureErrorCause: true,
           depth: 5,
         }),
+        // Request bodies carry prompts and provider credentials; keep them out
+        // of Sentry entirely rather than relying on downstream scrubbing.
+        Sentry.httpIntegration({
+          maxRequestBodySize: 'none',
+        }),
       ];
     },
     maxBreadcrumbs: 20,
