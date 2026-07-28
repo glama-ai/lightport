@@ -1,3 +1,4 @@
+import { Environment } from './utils/env';
 import { ProxyAgent, Agent as UndiciAgent } from 'undici';
 
 export interface AgentConfig {
@@ -31,7 +32,6 @@ export function getHttpsAgent(): UndiciAgent | undefined {
 }
 
 export function buildAgents(agentConfig: AgentConfig) {
-  const { Environment } = require('./utils/env');
   const env = Environment({});
 
   requestTimeout =
