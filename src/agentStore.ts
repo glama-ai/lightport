@@ -34,11 +34,12 @@ export function getProxyAgent(proxyUrl: string): ProxyAgent {
     const requestTimeout = resolveRequestTimeout();
 
     agent = new ProxyAgent({
-      // Left as it was. A request tunnelled through a CONNECT proxy is a
-      // different negotiation from a direct one and nothing here has measured
-      // it; unlike the fork below, this choice is made by an explicit proxy URL
-      // rather than by configuration that looks unrelated to connections.
-      allowH2: false,
+      // `allowH2` is left unset here for the same reason as below. It governs
+      // only the tunnelled connection to the provider: undici always speaks
+      // http/1.1 to the proxy itself, CONNECT being an http/1.1 method, and
+      // then hands the socket to a connector chosen by this option. Forcing it
+      // false meant a proxied deployment could not reach a provider over h2
+      // even where a direct one could.
       uri: proxyUrl,
       ...(requestTimeout ? { headersTimeout: requestTimeout, bodyTimeout: requestTimeout } : {}),
     });
