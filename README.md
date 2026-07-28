@@ -83,6 +83,17 @@ curl http://localhost:8787/v1/chat/completions \
   }'
 ```
 
+### Request timing
+
+Every response carries a `Server-Timing` header breaking the request into stages, and the same breakdown is logged once per request:
+
+```
+server-timing: total;dur=3020.2, parse;dur=0.2, validate;dur=0.3, transform;dur=0.2,
+               socket;dur=3.3, ttfb;dur=3007.5, read;dur=2.2
+```
+
+`socket` is time spent acquiring an upstream connection (queueing, DNS, TCP, TLS); `ttfb` is time spent waiting for the provider to answer. A slow gateway and a slow provider are indistinguishable from the outside — these tell them apart. The log line also reports `send` (writing the response back) and covers requests whose caller hung up before reading any header.
+
 ## Scripts
 
 ```bash

@@ -13,6 +13,18 @@ import modelResponsesHandler from './handlers/modelResponsesHandler';
 import { logger } from './logger';
 import { parseBody } from './middlewares/lightport';
 import { requestValidator } from './middlewares/requestValidator';
+import {
+  describeRequest,
+  getInFlight,
+  getRequestTiming,
+  measureStage,
+  recordStage,
+  runWithRequestTiming,
+  toServerTiming,
+  toStageDurations,
+  type RequestTiming,
+} from './observability/requestTiming';
+import { observeUpstreamTiming } from './observability/upstreamTiming';
 import { captureException } from './sentry/captureException';
 import { setRequestTags } from './sentry/setRequestTags';
 import { withRequestScope } from './sentry/withRequestScope';
@@ -28,6 +40,8 @@ type AppLifecycle = {
 };
 
 const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}) => {
+  observeUpstreamTiming();
+
   const app = Fastify({
     logger: false,
     return503OnClosing: true,
@@ -79,18 +93,31 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
 
     const raw = reply.raw;
 
+    describeRequest({ status: response.status });
+
     // Nothing below can reach a caller who has already gone, and writing to a
     // destroyed response only invites an error event on a socket nobody owns.
     if (raw.destroyed) {
       return;
     }
 
-    raw.writeHead(response.status, Object.fromEntries(response.headers));
+    const timing = getRequestTiming();
+    const headers = Object.fromEntries(response.headers);
+
+    // Last moment at which any of this can still be told to the caller: once the
+    // status line is out, the only remaining channel is the log.
+    if (timing) {
+      headers['server-timing'] = toServerTiming(timing);
+    }
+
+    raw.writeHead(response.status, headers);
 
     if (!response.body) {
       raw.end();
       return;
     }
+
+    const startedWriting = performance.now();
 
     const callerGone = getClientAbortSignal();
     const reader = response.body.getReader();
@@ -132,6 +159,8 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
         captureException({ error: err, message: 'response stream truncated' });
       }
     } finally {
+      recordStage('send', performance.now() - startedWriting);
+
       void reader.cancel().catch(() => {});
 
       if (raw.destroyed) {
@@ -171,53 +200,97 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
     reply.type('text/plain').send('AI Gateway says hey!');
   });
 
+  /**
+   * One line per request, whatever became of it.
+   *
+   * `Server-Timing` reaches whoever read the response, which excludes every
+   * caller that gave up waiting — the population most worth explaining. This is
+   * the only account of those, and the only place the write to the caller can be
+   * reported, since that finishes long after its own headers left.
+   */
+  const logRequest = (timing: RequestTiming, request: FastifyRequest) => {
+    logger.info(
+      {
+        inFlight: getInFlight(),
+        ms: toStageDurations(timing),
+        route: request.routeOptions.url,
+        traceId: request.headers[HEADER_KEYS.TRACE_ID],
+        ...timing.attributes,
+      },
+      'request complete',
+    );
+  };
+
   const handleRoute = (handler: (c: GatewayContext) => Promise<Response>): any => {
     return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
       return withRequestScope(async () => {
-        const c = createGatewayContext(request, reply);
-
-        // A caller that hangs up mid-stream leaves the provider request running,
-        // and the provider goes on billing for every token it generates. Node
-        // signals this by destroying the socket, so there is no error to catch —
-        // it has to be watched for. externalServiceFetch picks the signal up
-        // from here, which is the only thing that actually stops the meter.
-        const callerGone = new AbortController();
-        reply.raw.once('close', () => {
-          if (!reply.raw.writableEnded) {
-            callerGone.abort();
+        return runWithRequestTiming(async (timing) => {
+          try {
+            await routeRequest(handler, request, reply);
+          } finally {
+            logRequest(timing, request);
           }
-        });
-
-        return runWithClientAbort(callerGone.signal, async () => {
-          // Tagged from the headers first so that a body that fails to parse
-          // still leaves an exception we can place. `tryPost` refines these once
-          // the provider and model are resolved rather than merely requested.
-          setRequestTags({
-            provider: request.headers[HEADER_KEYS.PROVIDER],
-            route: request.routeOptions.url,
-            traceId: request.headers[HEADER_KEYS.TRACE_ID],
-          });
-
-          await parseBody(request, c);
-
-          const { bodyJSON } = c.get('requestBodyData');
-
-          setRequestTags({
-            model: bodyJSON?.model,
-            stream: Boolean(bodyJSON?.stream),
-          });
-
-          const validationResponse = requestValidator(c);
-          if (validationResponse instanceof Response) {
-            await sendWebResponse(reply, validationResponse);
-            return;
-          }
-
-          const response = await handler(c);
-          await sendWebResponse(reply, response);
         });
       });
     };
+  };
+
+  const routeRequest = async (
+    handler: (c: GatewayContext) => Promise<Response>,
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    const c = createGatewayContext(request, reply);
+
+    // A caller that hangs up mid-stream leaves the provider request running,
+    // and the provider goes on billing for every token it generates. Node
+    // signals this by destroying the socket, so there is no error to catch —
+    // it has to be watched for. externalServiceFetch picks the signal up
+    // from here, which is the only thing that actually stops the meter.
+    const callerGone = new AbortController();
+    reply.raw.once('close', () => {
+      if (!reply.raw.writableEnded) {
+        callerGone.abort();
+      }
+    });
+
+    return runWithClientAbort(callerGone.signal, async () => {
+      // Tagged from the headers first so that a body that fails to parse
+      // still leaves an exception we can place. `tryPost` refines these once
+      // the provider and model are resolved rather than merely requested.
+      setRequestTags({
+        provider: request.headers[HEADER_KEYS.PROVIDER],
+        route: request.routeOptions.url,
+        traceId: request.headers[HEADER_KEYS.TRACE_ID],
+      });
+
+      await measureStage('parse', () => parseBody(request, c));
+
+      const { bodyJSON } = c.get('requestBodyData');
+
+      setRequestTags({
+        model: bodyJSON?.model,
+        stream: Boolean(bodyJSON?.stream),
+      });
+
+      describeRequest({
+        model: bodyJSON?.model,
+        provider: request.headers[HEADER_KEYS.PROVIDER],
+        stream: Boolean(bodyJSON?.stream),
+      });
+
+      const validationStartedAt = performance.now();
+      const validationResponse = requestValidator(c);
+      recordStage('validate', performance.now() - validationStartedAt);
+
+      if (validationResponse instanceof Response) {
+        await sendWebResponse(reply, validationResponse);
+        return;
+      }
+
+      const response = await handler(c);
+      await sendWebResponse(reply, response);
+    });
   };
 
   // Chat completions

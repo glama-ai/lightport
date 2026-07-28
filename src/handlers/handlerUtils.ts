@@ -1,6 +1,7 @@
 import { getClientAbortSignal } from '../context/clientAbort';
 import { GatewayError } from '../errors/GatewayError';
 import { HEADER_KEYS, POWERED_BY, RESPONSE_HEADER_KEYS, CONTENT_TYPES } from '../globals';
+import { describeRequest, measureStage, recordStage } from '../observability/requestTiming';
 import Providers from '../providers';
 import { ProviderAPIConfig, endpointStrings } from '../providers/types';
 import { setRequestTags } from '../sentry/setRequestTags';
@@ -154,6 +155,8 @@ async function postToProvider(
     stream: isStreamingMode,
   });
 
+  describeRequest({ model: params.model, provider, stream: isStreamingMode });
+
   // Mapping providers to corresponding URLs
   const providerConfig = Providers[provider];
   if (!providerConfig) {
@@ -222,6 +225,8 @@ async function postToProvider(
     return adaptResponse(updatedResponse, adapterCtx, c);
   }
 
+  let transformStartedAt = performance.now();
+
   // Transform request body for the provider
   let transformedRequestBody: ReadableStream | FormData | Params =
     method === 'POST'
@@ -235,7 +240,12 @@ async function postToProvider(
         )
       : requestBody;
 
-  // Build headers
+  recordStage('transform', performance.now() - transformStartedAt);
+
+  // Build headers. Azure Entra, Vertex and AWS all fetch a token here, and that
+  // call reports itself through the same channels the provider call does. Timing
+  // it as preparation as well would bill one wait to two stages and leave the
+  // stages summing past the total they are meant to explain.
   const headers = await apiConfig.headers({
     c,
     providerOptions: providerOption,
@@ -245,6 +255,8 @@ async function postToProvider(
     gatewayRequestBody: params,
     headers: requestHeaders,
   });
+
+  transformStartedAt = performance.now();
 
   // Construct fetch options
   const fetchOptions = constructRequest(
@@ -279,6 +291,10 @@ async function postToProvider(
   if (customOptions) {
     Object.assign(fetchOptions, customOptions);
   }
+
+  // Everything from here on is spent waiting rather than preparing, so the
+  // preparation is closed off before the request goes out.
+  recordStage('transform', performance.now() - transformStartedAt);
 
   // Make the request
   const requestTimeout =
@@ -329,20 +345,27 @@ async function postToProvider(
   }
 
   // Transform the response
-  const { response: mappedResponse } = await responseHandler(
-    c,
-    response,
-    isStreamingMode,
-    provider,
-    fn,
-    url,
-    false,
-    params,
-    strictOpenAiCompliance,
-    c.req.url,
+  const { response: mappedResponse } = await measureStage('read', () =>
+    responseHandler(
+      c,
+      response,
+      isStreamingMode,
+      provider,
+      fn,
+      url,
+      false,
+      params,
+      strictOpenAiCompliance,
+      c.req.url,
+    ),
   );
 
-  updateResponseHeaders(
+  // `updateResponseHeaders` builds a new response rather than mutating the one
+  // it is given, so the result is the only thing carrying the trace id and the
+  // resolved provider. Dropping it left every caller on this path — which is all
+  // of them but the custom request handlers — with none of those headers, and no
+  // way to tie a gateway response back to the request that produced it.
+  const updatedResponse = updateResponseHeaders(
     mappedResponse,
     0,
     params,
@@ -350,7 +373,7 @@ async function postToProvider(
     provider,
   );
 
-  return adaptResponse(mappedResponse, adapterCtx, c);
+  return adaptResponse(updatedResponse, adapterCtx, c);
 }
 
 /**
