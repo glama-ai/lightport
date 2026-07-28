@@ -21,6 +21,7 @@ import type { GatewayContext } from '../types/GatewayContext';
 import { Params } from '../types/requestBody';
 import { getStreamModeSplitPattern, type SplitPatternType } from '../utils';
 import { parseJson } from '../utils/parseJson';
+import { setTimeout as delay } from 'node:timers/promises';
 
 function pipeToWriter(
   fn: () => Promise<void>,
@@ -213,12 +214,16 @@ async function* readSSEStream(
       ? `event: ${event.event}\ndata: ${event.data}`
       : `data: ${event.data}`;
 
-    if (isFirstChunk) {
-      isFirstChunk = false;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    } else if (isSleepTimeRequired) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
+    // Both pauses belong to the pacing Azure OpenAI needs. The longer one used
+    // to run for every provider, which put 25ms in front of the first token of
+    // every stream the gateway served — a quarter of the time some providers
+    // take to produce one. `readAWSStream` has never paced anything, so serving
+    // a stream without this is not new ground.
+    if (isSleepTimeRequired) {
+      await delay(isFirstChunk ? 25 : 1);
     }
+
+    isFirstChunk = false;
 
     if (transformFunction) {
       const transformedChunk = transformFunction(
@@ -277,12 +282,12 @@ async function* readNDJSONStream(
       const lastPart = parts.pop() ?? '';
       for (const part of parts) {
         if (part.length > 0) {
-          if (isFirstChunk) {
-            isFirstChunk = false;
-            await new Promise((resolve) => setTimeout(resolve, 25));
-          } else if (isSleepTimeRequired) {
-            await new Promise((resolve) => setTimeout(resolve, 1));
+          // Gated for the same reason as in readSSEStream above.
+          if (isSleepTimeRequired) {
+            await delay(isFirstChunk ? 25 : 1);
           }
+
+          isFirstChunk = false;
 
           if (transformFunction) {
             const transformedChunk = transformFunction(
