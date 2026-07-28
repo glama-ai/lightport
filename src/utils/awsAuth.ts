@@ -324,8 +324,27 @@ export async function fetchECSContainerCredentials(
   };
 }
 
+/**
+ * The instance metadata service answers on a link-local address that exists
+ * only on EC2. Anywhere else — most container runtimes among them — nothing
+ * routes it and the packets are dropped rather than refused, so a probe hangs
+ * until the connect attempt gives up rather than failing. The credential chain
+ * makes four of these in sequence, on every request that reaches it, which is
+ * how a provider that is not even configured comes to cost twenty seconds.
+ *
+ * A second is what AWS's own SDKs allow here, and for the same reason.
+ */
+const IMDS_ORIGIN = 'http://169.254.169.254';
+const IMDS_TIMEOUT_MS = 1_000;
+
+const fetchIMDS = (path: string, init: RequestInit = {}) =>
+  externalServiceFetch(`${IMDS_ORIGIN}${path}`, {
+    ...init,
+    signal: AbortSignal.timeout(IMDS_TIMEOUT_MS),
+  });
+
 export async function fetchIMDSv2Token(): Promise<string> {
-  const response = await externalServiceFetch(`http://169.254.169.254/latest/api/token`, {
+  const response = await fetchIMDS('/latest/api/token', {
     method: 'PUT',
     headers: {
       'X-aws-ec2-metadata-token-ttl-seconds': '21600',
@@ -341,9 +360,7 @@ export async function fetchIMDSv2Token(): Promise<string> {
 }
 
 export async function fetchIMDSRegion(token?: string): Promise<string> {
-  const response = await externalServiceFetch(
-    'http://169.254.169.254/latest/dynamic/instance-identity/document',
-    {
+  const response = await fetchIMDS('/latest/dynamic/instance-identity/document', {
       ...(token && {
         method: 'GET',
         headers: { 'X-aws-ec2-metadata-token': token },
@@ -359,9 +376,7 @@ export async function fetchIMDSRegion(token?: string): Promise<string> {
 }
 
 export async function fetchIMDSRoleName(token?: string): Promise<string> {
-  const response = await externalServiceFetch(
-    'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
-    {
+  const response = await fetchIMDS('/latest/meta-data/iam/security-credentials/', {
       ...(token && {
         method: 'GET',
         headers: {
@@ -380,9 +395,7 @@ export async function fetchIMDSCredentials(
   roleName: string,
   token?: string,
 ): Promise<AWSCredentials | null> {
-  const response = await externalServiceFetch(
-    `http://169.254.169.254/latest/meta-data/iam/security-credentials/${roleName}`,
-    {
+  const response = await fetchIMDS(`/latest/meta-data/iam/security-credentials/${roleName}`, {
       ...(token && {
         method: 'GET',
         headers: {
@@ -435,15 +448,12 @@ export async function fetchECSRegionFromMetadata(
 
 export async function fetchIMDSIdentityDocument(token?: string): Promise<any | null> {
   try {
-    const resp = await externalServiceFetch(
-      'http://169.254.169.254/latest/dynamic/instance-identity/document',
-      {
-        ...(token && {
-          method: 'GET',
-          headers: { 'X-aws-ec2-metadata-token': token },
-        }),
-      },
-    );
+    const resp = await fetchIMDS('/latest/dynamic/instance-identity/document', {
+      ...(token && {
+        method: 'GET',
+        headers: { 'X-aws-ec2-metadata-token': token },
+      }),
+    });
     if (!resp.ok) return null;
     return await resp.json();
   } catch {
@@ -473,7 +483,7 @@ export async function fetchIMDSRoleArn(token?: string): Promise<string | undefin
   }
   // Fallback: try instance profile arn and convert to role arn
   try {
-    const resp = await externalServiceFetch('http://169.254.169.254/latest/meta-data/iam/info', {
+    const resp = await fetchIMDS('/latest/meta-data/iam/info', {
       ...(token && {
         method: 'GET',
         headers: { 'X-aws-ec2-metadata-token': token },
@@ -599,6 +609,9 @@ export async function fetchIMDSAllCredentials(
   };
 }
 
-// Initialize file-based credentials on module load (no Redis dependency)
-await getCredentialsFromSharedCredentialsFile();
-await getCredentialsFromAwsConfigFile();
+// Both loaders used to be awaited here, at module scope. They memoise their own
+// result and the Bedrock credential chain already calls them, so the only thing
+// the eager pass added was work every deployment did whether or not it had an
+// AWS provider configured: two file reads for `~/.aws/*`, an exception captured
+// for each one that was absent, and a top-level await holding up the module
+// graph behind them. The first Bedrock request now pays the read instead.

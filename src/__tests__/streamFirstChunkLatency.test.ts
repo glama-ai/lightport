@@ -4,9 +4,17 @@ import http from 'node:http';
 import { afterEach, expect, it } from 'vitest';
 
 /**
- * The gateway used to pause 25ms before forwarding the first chunk of every
- * stream, whatever the provider. Nothing failed when it did — the tokens all
+ * The gateway pauses 25ms before the first chunk of an Azure OpenAI stream, and
+ * used to do it for every provider. Nothing failed when it did — the tokens all
  * arrived, just later — so only a clock notices.
+ *
+ * Asserted as the difference between two providers measured back to back rather
+ * than as an absolute duration. A machine under load inflates both equally, so
+ * the gap holds where a threshold would not: the first version of this timed one
+ * request against 25ms and flaked once the rest of the suite ran alongside it.
+ *
+ * It fails in both directions, which is the point. Pace every provider again and
+ * the gap closes; stop pacing Azure and it closes too.
  */
 
 const apps: Array<ReturnType<typeof createApp>> = [];
@@ -52,42 +60,69 @@ const startProvider = async () => {
   return port;
 };
 
-it('forwards the first chunk of a stream without pausing first', async () => {
+const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+
+it('paces Azure OpenAI streams and no others', { retry: 2 }, async () => {
   const providerPort = await startProvider();
   const port = await getPort();
   const app = createApp();
   apps.push(app);
   await app.listen({ host: '127.0.0.1', port });
 
-  const startedAt = performance.now();
+  const shared = {
+    authorization: 'Bearer sk-not-a-real-key',
+    'content-type': 'application/json',
+    'x-lightport-custom-host': `http://127.0.0.1:${providerPort}/v1`,
+  };
 
-  const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-    body: JSON.stringify({
-      messages: [{ content: 'hi', role: 'user' }],
-      model: 'gpt-4o-mini',
-      stream: true,
-    }),
-    headers: {
-      authorization: 'Bearer sk-not-a-real-key',
-      'content-type': 'application/json',
-      'x-lightport-custom-host': `http://127.0.0.1:${providerPort}/v1`,
-      'x-lightport-provider': 'openai',
-    },
-    method: 'POST',
-  });
+  const openai = { ...shared, 'x-lightport-provider': 'openai' };
+  const azure = {
+    ...shared,
+    'x-lightport-provider': 'azure-openai',
+    'x-lightport-azure-api-version': '2024-02-01',
+    'x-lightport-azure-deployment-id': 'deployment',
+    'x-lightport-azure-resource-name': 'resource',
+  };
 
-  expect(response.status).toBe(200);
+  const timeToFirstChunk = async (headers: Record<string, string>) => {
+    const startedAt = performance.now();
 
-  const reader = response.body!.getReader();
-  const { value } = await reader.read();
-  const firstChunkMs = performance.now() - startedAt;
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      body: JSON.stringify({
+        messages: [{ content: 'hi', role: 'user' }],
+        model: 'gpt-4o-mini',
+        stream: true,
+      }),
+      headers,
+      method: 'POST',
+    });
 
-  await reader.cancel();
+    expect(response.status).toBe(200);
 
-  expect(new TextDecoder().decode(value)).toContain('data:');
+    const reader = response.body!.getReader();
+    const { value } = await reader.read();
+    const elapsed = performance.now() - startedAt;
 
-  // The pause removed was 25ms, so a regression cannot come in under that.
-  // Everything here is in-process over loopback, which leaves enough room that
-  // this is measuring the pause rather than the machine.
-  expect(firstChunkMs).toBeLessThan(25);
-}, 15_000);
+    await reader.cancel();
+    expect(new TextDecoder().decode(value)).toContain('data:');
+
+    return elapsed;
+  };
+
+  // Warmed first: a cold route costs more than the pause being measured.
+  for (let round = 0; round < 3; round++) {
+    await timeToFirstChunk(openai);
+    await timeToFirstChunk(azure);
+  }
+
+  const unpaced: number[] = [];
+  const paced: number[] = [];
+
+  for (let round = 0; round < 5; round++) {
+    unpaced.push(await timeToFirstChunk(openai));
+    paced.push(await timeToFirstChunk(azure));
+  }
+
+  // The pause is 25ms; anything above half of it can only be the pause.
+  expect(median(paced) - median(unpaced)).toBeGreaterThan(15);
+}, 30_000);

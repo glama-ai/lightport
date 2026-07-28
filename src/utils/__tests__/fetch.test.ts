@@ -26,6 +26,21 @@ const startProvider = async () => {
   return `http://127.0.0.1:${port}`;
 };
 
+/** Accepts the connection and then says nothing, the way a hung host behaves. */
+const startSilentProvider = async () => {
+  const port = await getPort();
+
+  const server = http.createServer(() => {});
+
+  servers.push(server);
+
+  await new Promise<void>((resolve) => {
+    server.listen(port, '127.0.0.1', resolve);
+  });
+
+  return `http://127.0.0.1:${port}`;
+};
+
 afterEach(async () => {
   vi.unstubAllEnvs();
   vi.resetModules();
@@ -51,10 +66,8 @@ describe('externalServiceFetch', () => {
     await expect(response.json()).resolves.toEqual({ reached: true });
   });
 
-  it('reaches the provider through a configured dispatcher', async () => {
-    // `REQUEST_TIMEOUT` is one of the three settings — TLS and a proxy URL being
-    // the others — that make `buildAgents` construct an undici dispatcher, and a
-    // dispatcher is only usable by the same copy of undici that built it. Hand
+  it('reaches the provider through a dispatcher carrying timeouts', async () => {
+    // A dispatcher is only usable by the same copy of undici that built it. Hand
     // it to Node's built-in fetch instead and every provider call dies with
     // `invalid onRequestStart method` before a socket is ever opened, which is
     // indistinguishable, from the outside, from the gateway being down.
@@ -73,5 +86,23 @@ describe('externalServiceFetch', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ reached: true });
+  });
+
+  it('honours a deadline supplied by the caller', async () => {
+    // What the metadata-service probes rely on: a host that accepts and then
+    // says nothing has to fail on a schedule rather than hang. Without this the
+    // AWS credential chain sits on an unroutable link-local address until undici
+    // abandons the connection, on every request that reaches it.
+    const { externalServiceFetch } = await import('../fetch');
+
+    const startedAt = performance.now();
+
+    await expect(
+      externalServiceFetch(await startSilentProvider(), {
+        signal: AbortSignal.timeout(200),
+      }),
+    ).rejects.toThrow(/abort/i);
+
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
   });
 });
