@@ -48,6 +48,14 @@ export const initializeSentry = () => {
         Sentry.httpIntegration({
           maxRequestBodySize: 'none',
         }),
+        // Provider requests go out through undici's fetch, which this integration
+        // decorates with `sentry-trace` and `baggage` headers by default. Nothing
+        // downstream reads them — no provider is in our trace — and they carry the
+        // Sentry public key and environment name to all 85+ of them. Breadcrumbs
+        // are kept: those stay in the process until an exception is captured.
+        Sentry.nativeNodeFetchIntegration({
+          tracePropagation: false,
+        }),
       ];
     },
     maxBreadcrumbs: 20,
