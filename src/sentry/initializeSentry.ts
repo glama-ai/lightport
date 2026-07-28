@@ -45,7 +45,15 @@ export const initializeSentry = () => {
         }),
         // Request bodies carry prompts and provider credentials; keep them out
         // of Sentry entirely rather than relying on downstream scrubbing.
+        //
+        // Breadcrumbs here cover outgoing `node:http` requests only, and the
+        // gateway makes none: every provider call goes out through undici's
+        // fetch, which `nativeNodeFetchIntegration` below still records. This
+        // buys nothing on Node 24, which is what we ship — the listener pair it
+        // avoids is only installed below 22.12 — but it stops a whole class of
+        // instrumentation from waking up for traffic this process never sends.
         Sentry.httpIntegration({
+          breadcrumbs: false,
           maxRequestBodySize: 'none',
         }),
         // Provider requests go out through undici's fetch, which this integration
