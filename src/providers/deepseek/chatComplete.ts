@@ -1,6 +1,7 @@
 import { DEEPSEEK } from '../../globals';
 import { Message, Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
+import { OpenAIErrorResponseTransform } from '../openai/utils';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
 import {
   generateErrorResponse,
@@ -137,7 +138,7 @@ interface DeepSeekStreamChunk {
 }
 
 export const DeepSeekChatCompleteResponseTransform: (
-  response: DeepSeekChatCompleteResponse | DeepSeekErrorResponse,
+  response: DeepSeekChatCompleteResponse | DeepSeekErrorResponse | ErrorResponse,
   responseStatus: number,
   responseHeaders: Headers,
   strictOpenAiCompliance: boolean,
@@ -147,6 +148,15 @@ export const DeepSeekChatCompleteResponseTransform: (
   _responseHeaders,
   strictOpenAiCompliance,
 ) => {
+  // DeepSeek nests its errors the way OpenAI does, under `error`. Only the flat
+  // shape was recognised, so a real refusal — a bad key, a rate limit — fell
+  // through to the invalid-response branch below and reached the caller as
+  // "Invalid response received from deepseek", with the provider's own message,
+  // type and code sitting in the payload unread.
+  if (responseStatus !== 200 && 'error' in response) {
+    return OpenAIErrorResponseTransform(response as ErrorResponse, DEEPSEEK);
+  }
+
   if ('message' in response && responseStatus !== 200) {
     return generateErrorResponse(
       {
