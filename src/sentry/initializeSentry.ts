@@ -39,9 +39,16 @@ export const initializeSentry = () => {
     integrations: (integrations) => {
       return [
         ...integrations,
+        // This lifts every non-standard property off a captured Error and walks
+        // it to `depth`, and gateway errors wrap the request state that produced
+        // them — a messages array, tools, provider options. Walking that to 5
+        // costs a third of the price of a capture, and the levels it buys are
+        // the insides of individual messages rather than the shape of the
+        // request. What it normalizes is exempt from `normalizeDepth` below, so
+        // this is the only depth that governs it.
         Sentry.extraErrorDataIntegration({
           captureErrorCause: true,
-          depth: 5,
+          depth: 3,
         }),
         // Request bodies carry prompts and provider credentials; keep them out
         // of Sentry entirely rather than relying on downstream scrubbing.
