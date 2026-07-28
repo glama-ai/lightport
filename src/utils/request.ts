@@ -22,7 +22,12 @@ import { parseJson } from './parseJson';
 export function constructConfigFromRequestHeaders(
   requestHeaders: Record<string, any>,
 ): Options | Targets {
-  const azureConfig = {
+  // Each provider's headers are read only if that provider is the one being
+  // asked for. A request names one provider, so building all fifteen of these up
+  // front spent some eighty header lookups — every key concatenated from
+  // POWERED_BY at run time — on fourteen objects that were then discarded. That
+  // made this function the largest single consumer of CPU in the gateway.
+  const azureConfig = () => ({
     resourceName: requestHeaders[`x-${POWERED_BY}-azure-resource-name`],
     deploymentId: requestHeaders[`x-${POWERED_BY}-azure-deployment-id`],
     apiVersion: requestHeaders[`x-${POWERED_BY}-azure-api-version`],
@@ -35,9 +40,9 @@ export function constructConfigFromRequestHeaders(
     azureModelName: requestHeaders[`x-${POWERED_BY}-azure-model-name`],
     openaiBeta: requestHeaders[`x-${POWERED_BY}-openai-beta`] || requestHeaders[`openai-beta`],
     azureEntraScope: requestHeaders[`x-${POWERED_BY}-azure-entra-scope`],
-  };
+  });
 
-  const azureAiInferenceConfig = {
+  const azureAiInferenceConfig = () => ({
     azureApiVersion: requestHeaders[`x-${POWERED_BY}-azure-api-version`],
     azureEndpointName: requestHeaders[`x-${POWERED_BY}-azure-endpoint-name`],
     azureFoundryUrl: requestHeaders[`x-${POWERED_BY}-azure-foundry-url`],
@@ -50,15 +55,15 @@ export function constructConfigFromRequestHeaders(
     azureEntraTenantId: requestHeaders[`x-${POWERED_BY}-azure-entra-tenant-id`],
     azureEntraScope: requestHeaders[`x-${POWERED_BY}-azure-entra-scope`],
     anthropicVersion: requestHeaders[`x-${POWERED_BY}-anthropic-version`],
-  };
+  });
 
-  const stabilityAiConfig = {
+  const stabilityAiConfig = () => ({
     stabilityClientId: requestHeaders[`x-${POWERED_BY}-stability-client-id`],
     stabilityClientUserId: requestHeaders[`x-${POWERED_BY}-stability-client-user-id`],
     stabilityClientVersion: requestHeaders[`x-${POWERED_BY}-stability-client-version`],
-  };
+  });
 
-  const awsExtraConfig = {
+  const awsExtraConfig = () => ({
     awsS3Bucket: requestHeaders[`x-${POWERED_BY}-aws-s3-bucket`],
     awsS3ObjectKey:
       requestHeaders[`x-${POWERED_BY}-provider-file-name`] ||
@@ -71,9 +76,9 @@ export function constructConfigFromRequestHeaders(
       requestHeaders[`x-${POWERED_BY}-amz-server-side-encryption-aws-kms-key-id`],
     // proxy related config.
     awsService: requestHeaders[`x-${POWERED_BY}-aws-service`],
-  };
+  });
 
-  const awsConfig = {
+  const awsConfig = () => ({
     awsAccessKeyId: requestHeaders[`x-${POWERED_BY}-aws-access-key-id`],
     awsSecretAccessKey: requestHeaders[`x-${POWERED_BY}-aws-secret-access-key`],
     awsSessionToken: requestHeaders[`x-${POWERED_BY}-aws-session-token`],
@@ -81,10 +86,10 @@ export function constructConfigFromRequestHeaders(
     awsRoleArn: requestHeaders[`x-${POWERED_BY}-aws-role-arn`],
     awsAuthType: requestHeaders[`x-${POWERED_BY}-aws-auth-type`],
     awsExternalId: requestHeaders[`x-${POWERED_BY}-aws-external-id`],
-    ...awsExtraConfig,
-  };
+    ...awsExtraConfig(),
+  });
 
-  const sagemakerConfig = {
+  const sagemakerConfig = () => ({
     amznSagemakerCustomAttributes:
       requestHeaders[`x-${POWERED_BY}-amzn-sagemaker-custom-attributes`],
     amznSagemakerTargetModel: requestHeaders[`x-${POWERED_BY}-amzn-sagemaker-target-model`],
@@ -98,59 +103,66 @@ export function constructConfigFromRequestHeaders(
       requestHeaders[`x-${POWERED_BY}-amzn-sagemaker-inference-component`],
     amznSagemakerSessionId: requestHeaders[`x-${POWERED_BY}-amzn-sagemaker-session-id`],
     amznSagemakerModelName: requestHeaders[`x-${POWERED_BY}-amzn-sagemaker-model-name`],
-  };
+  });
 
-  const workersAiConfig = {
+  const workersAiConfig = () => ({
     workersAiAccountId: requestHeaders[`x-${POWERED_BY}-workers-ai-account-id`],
-  };
+  });
 
-  const openAiConfig = {
+  const openAiConfig = () => ({
     openaiOrganization: requestHeaders[`x-${POWERED_BY}-openai-organization`],
     openaiProject: requestHeaders[`x-${POWERED_BY}-openai-project`],
     openaiBeta: requestHeaders[`x-${POWERED_BY}-openai-beta`] || requestHeaders[`openai-beta`],
-  };
+  });
 
-  const huggingfaceConfig = {
+  const huggingfaceConfig = () => ({
     huggingfaceBaseUrl: requestHeaders[`x-${POWERED_BY}-huggingface-base-url`],
-  };
+  });
 
-  const vertexExtraConfig = {
+  const vertexExtraConfig = () => ({
     vertexStorageBucketName: requestHeaders[`x-${POWERED_BY}-vertex-storage-bucket-name`],
     filename: requestHeaders[`x-${POWERED_BY}-provider-file-name`],
     vertexModelName: requestHeaders[`x-${POWERED_BY}-provider-model`],
     vertexBatchEndpoint: requestHeaders[`x-${POWERED_BY}-provider-batch-endpoint`], // common header for all supported providers.
+  });
+
+  // The service account JSON is parsed in here rather than alongside the other
+  // headers, so a request for some other provider no longer parses a credential
+  // it cannot use — nor reports an exception when that credential is malformed.
+  const vertexConfig = (): Record<string, any> => {
+    const config: Record<string, any> = {
+      vertexProjectId: requestHeaders[`x-${POWERED_BY}-vertex-project-id`],
+      vertexRegion: requestHeaders[`x-${POWERED_BY}-vertex-region`],
+      vertexSkipPtuCostAttribution:
+        requestHeaders[`x-${POWERED_BY}-vertex-skip-ptu-cost-attribution`] === 'true',
+      vertexAuthType: requestHeaders[`x-${POWERED_BY}-vertex-auth-type`],
+      ...vertexExtraConfig(),
+    };
+
+    const vertexServiceAccountJson = requestHeaders[`x-${POWERED_BY}-vertex-service-account-json`];
+
+    if (vertexServiceAccountJson) {
+      try {
+        config.vertexServiceAccountJson = parseJson(vertexServiceAccountJson);
+      } catch (error) {
+        captureException({ error, message: 'failed to parse vertex service account JSON' });
+        config.vertexServiceAccountJson = null;
+      }
+    }
+
+    return config;
   };
 
-  const vertexConfig: Record<string, any> = {
-    vertexProjectId: requestHeaders[`x-${POWERED_BY}-vertex-project-id`],
-    vertexRegion: requestHeaders[`x-${POWERED_BY}-vertex-region`],
-    vertexSkipPtuCostAttribution:
-      requestHeaders[`x-${POWERED_BY}-vertex-skip-ptu-cost-attribution`] === 'true',
-    vertexAuthType: requestHeaders[`x-${POWERED_BY}-vertex-auth-type`],
-    ...vertexExtraConfig,
-  };
-
-  const fireworksConfig = {
+  const fireworksConfig = () => ({
     fireworksAccountId: requestHeaders[`x-${POWERED_BY}-fireworks-account-id`],
     fireworksFileLength: requestHeaders[`x-${POWERED_BY}-file-upload-size`],
-  };
+  });
 
-  const anthropicConfig = {
+  const anthropicConfig = () => ({
     anthropicApiKey: requestHeaders[`x-api-key`],
-  };
+  });
 
-  const vertexServiceAccountJson = requestHeaders[`x-${POWERED_BY}-vertex-service-account-json`];
-
-  if (vertexServiceAccountJson) {
-    try {
-      vertexConfig.vertexServiceAccountJson = parseJson(vertexServiceAccountJson);
-    } catch (error) {
-      captureException({ error, message: 'failed to parse vertex service account JSON' });
-      vertexConfig.vertexServiceAccountJson = null;
-    }
-  }
-
-  const oracleConfig = {
+  const oracleConfig = () => ({
     oracleApiVersion: requestHeaders[`x-${POWERED_BY}-oracle-api-version`],
     oracleRegion: requestHeaders[`x-${POWERED_BY}-oracle-region`],
     oracleCompartmentId: requestHeaders[`x-${POWERED_BY}-oracle-compartment-id`],
@@ -160,19 +172,20 @@ export function constructConfigFromRequestHeaders(
     oracleFingerprint: requestHeaders[`x-${POWERED_BY}-oracle-fingerprint`],
     oraclePrivateKey: requestHeaders[`x-${POWERED_BY}-oracle-private-key`],
     oracleKeyPassphrase: requestHeaders[`x-${POWERED_BY}-oracle-key-passphrase`],
-  };
+  });
 
-  const databricksConfig = {
+  const databricksConfig = () => ({
     databricksWorkspace: requestHeaders[`x-${POWERED_BY}-databricks-workspace`],
-  };
+  });
 
-  const anthropicExtraConfig = {
+  const anthropicExtraConfig = () => ({
     anthropicBeta:
       requestHeaders[`x-${POWERED_BY}-anthropic-beta`] || requestHeaders[`anthropic-beta`],
     anthropicVersion:
       requestHeaders[`x-${POWERED_BY}-anthropic-version`] || requestHeaders[`anthropic-version`],
-  };
+  });
 
+  // Read by both paths below whatever the provider, so nothing is deferred here.
   const defaultsConfig = {
     input_guardrails: requestHeaders[`x-lightport-default-input-guardrails`]
       ? parseJson<any[]>(requestHeaders[`x-lightport-default-input-guardrails`])
@@ -194,87 +207,87 @@ export function constructConfigFromRequestHeaders(
       if (parsedConfigJson.provider === AZURE_OPEN_AI) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...azureConfig,
+          ...azureConfig(),
         };
       }
 
       if (parsedConfigJson.provider === BEDROCK || parsedConfigJson.provider === SAGEMAKER) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...awsConfig,
+          ...awsConfig(),
         };
       }
 
       if (parsedConfigJson.provider === SAGEMAKER) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...sagemakerConfig,
+          ...sagemakerConfig(),
         };
       }
 
       if (parsedConfigJson.provider === WORKERS_AI) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...workersAiConfig,
+          ...workersAiConfig(),
         };
       }
 
       if (parsedConfigJson.provider === OPEN_AI) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...openAiConfig,
+          ...openAiConfig(),
         };
       }
 
       if (parsedConfigJson.provider === HUGGING_FACE) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...huggingfaceConfig,
+          ...huggingfaceConfig(),
         };
       }
 
       if (parsedConfigJson.provider === GOOGLE_VERTEX_AI) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...vertexConfig,
+          ...vertexConfig(),
         };
       }
 
       if (parsedConfigJson.provider === FIREWORKS_AI) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...fireworksConfig,
+          ...fireworksConfig(),
         };
       }
 
       if (parsedConfigJson.provider === AZURE_AI_INFERENCE) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...azureAiInferenceConfig,
+          ...azureAiInferenceConfig(),
         };
       }
       if (parsedConfigJson.provider === ANTHROPIC) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...anthropicConfig,
+          ...anthropicConfig(),
         };
       }
       if (parsedConfigJson.provider === STABILITY_AI) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...stabilityAiConfig,
+          ...stabilityAiConfig(),
         };
       }
       if (parsedConfigJson.provider === ORACLE) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...oracleConfig,
+          ...oracleConfig(),
         };
       }
       if (parsedConfigJson.provider === DATABRICKS) {
         parsedConfigJson = {
           ...parsedConfigJson,
-          ...databricksConfig,
+          ...databricksConfig(),
         };
       }
     }
@@ -298,36 +311,36 @@ export function constructConfigFromRequestHeaders(
     return {
       ...convertedConfig,
       // extra provider Options for endpoints like `batches`, `files` and `finetunes`
-      ...(parsedConfigJson.provider === BEDROCK && awsExtraConfig),
-      ...(parsedConfigJson.provider === GOOGLE_VERTEX_AI && vertexExtraConfig),
-      ...(parsedConfigJson.provider === FIREWORKS_AI && fireworksConfig),
+      ...(parsedConfigJson.provider === BEDROCK && awsExtraConfig()),
+      ...(parsedConfigJson.provider === GOOGLE_VERTEX_AI && vertexExtraConfig()),
+      ...(parsedConfigJson.provider === FIREWORKS_AI && fireworksConfig()),
       ...([ANTHROPIC, BEDROCK, GOOGLE_VERTEX_AI].includes(parsedConfigJson.provider)
-        ? anthropicExtraConfig
+        ? anthropicExtraConfig()
         : {}),
     };
   }
 
+  // Read once rather than rebuilt for each of the thirteen tests below.
+  const provider = requestHeaders[`x-${POWERED_BY}-provider`];
+
   return {
-    provider: requestHeaders[`x-${POWERED_BY}-provider`],
+    provider,
     apiKey: requestHeaders['authorization']?.replace('Bearer ', ''),
     defaultInputGuardrails: defaultsConfig.input_guardrails,
     defaultOutputGuardrails: defaultsConfig.output_guardrails,
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === AZURE_OPEN_AI && azureConfig),
-    ...([BEDROCK, SAGEMAKER].includes(requestHeaders[`x-${POWERED_BY}-provider`]) && awsConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === SAGEMAKER && sagemakerConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === WORKERS_AI && workersAiConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === GOOGLE_VERTEX_AI && vertexConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === AZURE_AI_INFERENCE &&
-      azureAiInferenceConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === OPEN_AI && openAiConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === ANTHROPIC && anthropicConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === HUGGING_FACE && huggingfaceConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === STABILITY_AI && stabilityAiConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === FIREWORKS_AI && fireworksConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === ORACLE && oracleConfig),
-    ...(requestHeaders[`x-${POWERED_BY}-provider`] === DATABRICKS && databricksConfig),
-    ...([ANTHROPIC, BEDROCK, GOOGLE_VERTEX_AI].includes(requestHeaders[`x-${POWERED_BY}-provider`])
-      ? anthropicExtraConfig
-      : {}),
+    ...(provider === AZURE_OPEN_AI && azureConfig()),
+    ...([BEDROCK, SAGEMAKER].includes(provider) && awsConfig()),
+    ...(provider === SAGEMAKER && sagemakerConfig()),
+    ...(provider === WORKERS_AI && workersAiConfig()),
+    ...(provider === GOOGLE_VERTEX_AI && vertexConfig()),
+    ...(provider === AZURE_AI_INFERENCE && azureAiInferenceConfig()),
+    ...(provider === OPEN_AI && openAiConfig()),
+    ...(provider === ANTHROPIC && anthropicConfig()),
+    ...(provider === HUGGING_FACE && huggingfaceConfig()),
+    ...(provider === STABILITY_AI && stabilityAiConfig()),
+    ...(provider === FIREWORKS_AI && fireworksConfig()),
+    ...(provider === ORACLE && oracleConfig()),
+    ...(provider === DATABRICKS && databricksConfig()),
+    ...([ANTHROPIC, BEDROCK, GOOGLE_VERTEX_AI].includes(provider) ? anthropicExtraConfig() : {}),
   };
 }
