@@ -36,6 +36,6 @@ export async function externalServiceFetch(url: string, options?: RequestInit, p
   return dispatcherAwareFetch(url, {
     ...options,
     ...(signals.length > 0 && { signal: AbortSignal.any(signals) }),
-    ...(agent ? { dispatcher: agent } : {}),
+    dispatcher: agent,
   });
 }
