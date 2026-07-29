@@ -11,7 +11,10 @@ const MAX_KEY_COUNT = 100;
 const MAX_MESSAGE_LENGTH = 100;
 
 const deriveGroupingKey = (event: ErrorEvent): string => {
-  const exception = event.exception?.values?.[0];
+  // The last entry is the error the call site actually threw; LinkedErrors
+  // prepends anything found by walking `.cause`, so index 0 is the deepest
+  // cause once there's a chain, not the call site's own error.
+  const exception = event.exception?.values?.at(-1);
 
   if (!exception) {
     return 'unknown';

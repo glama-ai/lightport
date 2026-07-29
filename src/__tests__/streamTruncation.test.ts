@@ -159,7 +159,9 @@ describe('upstream stream truncation', () => {
 
     await Sentry.flush(2_000);
 
-    const captured = events.map((event) => event.exception?.values?.[0]?.value);
+    // The last entry is the error captureException actually relabels; index 0
+    // is the underlying socket cause, which is left alone so it stays legible.
+    const captured = events.map((event) => event.exception?.values?.at(-1)?.value);
 
     expect(captured).toContain('response stream truncated');
   }, 20_000);
@@ -183,7 +185,7 @@ describe('upstream stream truncation', () => {
 
     await Sentry.flush(2_000);
 
-    expect(events.map((event) => event.exception?.values?.[0]?.value)).not.toContain(
+    expect(events.map((event) => event.exception?.values?.at(-1)?.value)).not.toContain(
       'response stream truncated',
     );
   }, 20_000);

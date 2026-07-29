@@ -19,7 +19,14 @@ export const captureException = ({
     scope.addEventProcessor((event) => {
       if (event.exception?.values) {
         for (const exception of event.exception.values) {
-          exception.value = message;
+          // LinkedErrors has already expanded `error.cause` into extra entries
+          // by this point and marked each one `chained`; overwriting those too
+          // would erase the very cause text this call site wants Sentry to keep.
+          // A lone exception carries mechanism type `generic`, so this is a
+          // no-op change for every call site that isn't reporting a cause chain.
+          if (exception.mechanism?.type !== 'chained') {
+            exception.value = message;
+          }
         }
       }
 
@@ -28,6 +35,7 @@ export const captureException = ({
 
     const scopeContext = {
       extra: {
+        originalMessage: message,
         ...extra,
       },
       level,
