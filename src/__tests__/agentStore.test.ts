@@ -1,4 +1,4 @@
-import { buildAgents, getHttpsAgent, getProxyAgent } from '../agentStore';
+import { buildAgents, getHttpsAgent, getProxyAgent, resolveTransportTimeoutsFrom } from '../agentStore';
 import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { describe, expect, it } from 'vitest';
 
@@ -77,5 +77,57 @@ describe('getProxyAgent', () => {
     expect(agent).toBeInstanceOf(ProxyAgent);
     expect(getProxyAgent('http://127.0.0.1:3128')).toBe(agent);
     expect(getProxyAgent('http://127.0.0.1:3129')).not.toBe(agent);
+  });
+});
+
+/**
+ * The precedence rules, tested directly against synthetic env objects rather
+ * than through `getHttpsAgent`: `Environment()` snapshots `process.env` at
+ * import time (see the note above), so there is no way to vary these inputs
+ * against the real dispatcher from inside a running test.
+ */
+describe('resolveTransportTimeoutsFrom', () => {
+  it('falls back to the headers-timeout floor and leaves bodyTimeout to undici when nothing is configured', () => {
+    expect(resolveTransportTimeoutsFrom({})).toEqual({ headersTimeout: 120_000 });
+  });
+
+  it('lets REQUEST_TIMEOUT alone still set both, unchanged', () => {
+    expect(resolveTransportTimeoutsFrom({ REQUEST_TIMEOUT: '5000' })).toEqual({
+      bodyTimeout: 5000,
+      headersTimeout: 5000,
+    });
+  });
+
+  it('lets HEADERS_TIMEOUT override REQUEST_TIMEOUT for headers only', () => {
+    expect(
+      resolveTransportTimeoutsFrom({ HEADERS_TIMEOUT: '9000', REQUEST_TIMEOUT: '5000' }),
+    ).toEqual({
+      bodyTimeout: 5000,
+      headersTimeout: 9000,
+    });
+  });
+
+  it('lets BODY_TIMEOUT override REQUEST_TIMEOUT for body only', () => {
+    expect(
+      resolveTransportTimeoutsFrom({ BODY_TIMEOUT: '600000', REQUEST_TIMEOUT: '5000' }),
+    ).toEqual({
+      bodyTimeout: 600000,
+      headersTimeout: 5000,
+    });
+  });
+
+  it('needs no REQUEST_TIMEOUT at all once both are set independently', () => {
+    expect(
+      resolveTransportTimeoutsFrom({ BODY_TIMEOUT: '600000', HEADERS_TIMEOUT: '60000' }),
+    ).toEqual({
+      bodyTimeout: 600000,
+      headersTimeout: 60000,
+    });
+  });
+
+  it('ignores non-positive or non-numeric values', () => {
+    expect(resolveTransportTimeoutsFrom({ BODY_TIMEOUT: 'nonsense', HEADERS_TIMEOUT: '-1' })).toEqual({
+      headersTimeout: 120_000,
+    });
   });
 });

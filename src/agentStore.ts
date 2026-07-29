@@ -13,16 +13,8 @@ let httpsAgent: UndiciAgent | undefined;
 
 const proxyAgentCache = new Map<string, ProxyAgent>();
 
-/**
- * Resolved on each use rather than captured by `buildAgents`.
- *
- * A module-level copy written only by `buildAgents` left `getProxyAgent` reading
- * `undefined` whenever it ran first, giving a proxied request no timeouts at all
- * — the same shape of bug as the dispatcher fork below, one caller along.
- */
-const resolveRequestTimeout = (): number | undefined => {
-  const configured = Environment({})?.REQUEST_TIMEOUT;
-  const parsed = configured ? parseInt(configured) : Number.NaN;
+const parseTimeout = (value: string | undefined): number | undefined => {
+  const parsed = value ? parseInt(value) : Number.NaN;
 
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 };
@@ -30,16 +22,41 @@ const resolveRequestTimeout = (): number | undefined => {
 // undici defaults headersTimeout to 300s when unset, which outlives most
 // callers' own timeouts -- a silently dead connection (no RST, no data) never
 // gets flagged as bad and stays in the pool. This floor makes undici notice on
-// its own even when no REQUEST_TIMEOUT is configured.
+// its own even when nothing is configured.
 const DEFAULT_HEADERS_TIMEOUT = 120_000;
 
-const resolveTransportTimeouts = (): { headersTimeout: number; bodyTimeout?: number } => {
-  const requestTimeout = resolveRequestTimeout();
+/**
+ * `HEADERS_TIMEOUT`/`BODY_TIMEOUT` take over their own concern from
+ * `REQUEST_TIMEOUT` when set, since the two mean different things:
+ * time-to-headers is transport liveness (this connection has gone silent),
+ * while a reasoning model can legitimately go quiet between body chunks far
+ * longer than any connection should stay silent before responding at all.
+ * `REQUEST_TIMEOUT` alone still sets both, unchanged, for whatever already
+ * depends on that.
+ */
+export const resolveTransportTimeoutsFrom = (env: {
+  REQUEST_TIMEOUT?: string;
+  HEADERS_TIMEOUT?: string;
+  BODY_TIMEOUT?: string;
+}): { headersTimeout: number; bodyTimeout?: number } => {
+  const requestTimeout = parseTimeout(env.REQUEST_TIMEOUT);
+  const bodyTimeout = parseTimeout(env.BODY_TIMEOUT) ?? requestTimeout;
 
   return {
-    headersTimeout: requestTimeout ?? DEFAULT_HEADERS_TIMEOUT,
-    ...(requestTimeout ? { bodyTimeout: requestTimeout } : {}),
+    headersTimeout: parseTimeout(env.HEADERS_TIMEOUT) ?? requestTimeout ?? DEFAULT_HEADERS_TIMEOUT,
+    ...(bodyTimeout ? { bodyTimeout } : {}),
   };
+};
+
+/**
+ * Resolved on each use rather than captured by `buildAgents`.
+ *
+ * A module-level copy written only by `buildAgents` left `getProxyAgent` reading
+ * stale values whenever it ran first, giving a proxied request no timeouts at
+ * all — the same shape of bug as the dispatcher fork below, one caller along.
+ */
+const resolveTransportTimeouts = (): { headersTimeout: number; bodyTimeout?: number } => {
+  return resolveTransportTimeoutsFrom(Environment({}) ?? {});
 };
 
 export function getProxyAgent(proxyUrl: string): ProxyAgent {

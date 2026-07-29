@@ -14,12 +14,14 @@ const chainedEvent = (deepestMessage: string, thrownMessage: string): ErrorEvent
       { mechanism: { handled: true, type: 'generic' }, type: 'TypeError', value: thrownMessage },
     ],
   },
+  type: undefined,
 });
 
 const loneEvent = (message: string): ErrorEvent => ({
   exception: {
     values: [{ mechanism: { handled: true, type: 'generic' }, type: 'Error', value: message }],
   },
+  type: undefined,
 });
 
 describe('createEventRateLimiter grouping key', () => {
