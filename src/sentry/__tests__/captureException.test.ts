@@ -78,13 +78,37 @@ describe('cause chains on captured errors', () => {
     expect(values.at(-1)?.value).toBe('chatCompletions handler error');
   });
 
-  it('surfaces the intended message as extra even when the title is overridden', async () => {
+  it('surfaces the thrown error’s own message as extra even when its title is overridden', async () => {
     const error = new TypeError('fetch failed', { cause: new Error('read ECONNRESET') });
 
     captureException({ error, message: 'chatCompletions handler error' });
 
     await flush();
 
-    expect(events[0].extra?.originalMessage).toBe('chatCompletions handler error');
+    // Not the wrapper's message -- that's already sitting in exception.value.
+    // This is the text the override just erased from the thrown error itself.
+    expect(events[0].extra?.originalMessage).toBe('fetch failed');
+  });
+
+  it('serializes the cause chain into extra as a defense against LinkedErrors truncating it', async () => {
+    const error = Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+    });
+
+    captureException({ error, message: 'chatCompletions handler error' });
+
+    await flush();
+
+    expect(events[0].extra?.causeChain).toEqual([
+      { code: 'ECONNRESET', message: 'read ECONNRESET', name: 'Error' },
+    ]);
+  });
+
+  it('omits causeChain entirely for a lone exception', async () => {
+    captureException({ error: new Error('boom'), message: 'boom' });
+
+    await flush();
+
+    expect(events[0].extra?.causeChain).toBeUndefined();
   });
 });

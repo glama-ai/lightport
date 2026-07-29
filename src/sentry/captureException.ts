@@ -2,6 +2,33 @@ import { logger } from '../logger';
 import type { Extras, ScopeContext, SeverityLevel } from '@sentry/core';
 import { captureException as captureSentryException, withScope } from '@sentry/node-core/light';
 
+const MAX_CAUSE_DEPTH = 5;
+
+/**
+ * LinkedErrors truncates at 5 levels (`@sentry/core`'s own default `limit`),
+ * silently dropping anything deeper from `event.exception.values`. This walks
+ * `.cause` independently so a chain that hits that ceiling still leaves its
+ * tail somewhere in the event.
+ */
+const serializeCauseChain = (error: unknown): Array<{ code?: string; message: string; name: string }> => {
+  const chain: Array<{ code?: string; message: string; name: string }> = [];
+  let cause = error instanceof Error ? error.cause : undefined;
+
+  while (cause instanceof Error && chain.length < MAX_CAUSE_DEPTH) {
+    const code = (cause as { code?: unknown }).code;
+
+    chain.push({
+      ...(typeof code === 'string' && { code }),
+      message: cause.message,
+      name: cause.name,
+    });
+
+    cause = cause.cause;
+  }
+
+  return chain;
+};
+
 export const captureException = ({
   error,
   extra,
@@ -33,9 +60,12 @@ export const captureException = ({
       return event;
     });
 
+    const causeChain = serializeCauseChain(error);
+
     const scopeContext = {
       extra: {
-        originalMessage: message,
+        originalMessage: error instanceof Error ? error.message : String(error),
+        ...(causeChain.length > 0 && { causeChain }),
         ...extra,
       },
       level,
