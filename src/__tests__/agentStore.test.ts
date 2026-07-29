@@ -59,6 +59,15 @@ describe('getHttpsAgent', () => {
     // inputs now feed one constructor, so there is no branch left to diverge.
     expect(optionsOf(getHttpsAgent())).not.toHaveProperty('allowH2');
   });
+
+  it('always sets a headersTimeout, so a silently dead connection cannot outlive undici\'s notice of it', () => {
+    buildAgents({});
+
+    const { headersTimeout } = optionsOf(getHttpsAgent());
+
+    expect(typeof headersTimeout).toBe('number');
+    expect(headersTimeout).toBeGreaterThan(0);
+  });
 });
 
 describe('getProxyAgent', () => {

@@ -27,12 +27,25 @@ const resolveRequestTimeout = (): number | undefined => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 };
 
+// undici defaults headersTimeout to 300s when unset, which outlives most
+// callers' own timeouts -- a silently dead connection (no RST, no data) never
+// gets flagged as bad and stays in the pool. This floor makes undici notice on
+// its own even when no REQUEST_TIMEOUT is configured.
+const DEFAULT_HEADERS_TIMEOUT = 120_000;
+
+const resolveTransportTimeouts = (): { headersTimeout: number; bodyTimeout?: number } => {
+  const requestTimeout = resolveRequestTimeout();
+
+  return {
+    headersTimeout: requestTimeout ?? DEFAULT_HEADERS_TIMEOUT,
+    ...(requestTimeout ? { bodyTimeout: requestTimeout } : {}),
+  };
+};
+
 export function getProxyAgent(proxyUrl: string): ProxyAgent {
   let agent = proxyAgentCache.get(proxyUrl);
 
   if (!agent) {
-    const requestTimeout = resolveRequestTimeout();
-
     agent = new ProxyAgent({
       // `allowH2` is left unset here for the same reason as below. It governs
       // only the tunnelled connection to the provider: undici always speaks
@@ -41,7 +54,7 @@ export function getProxyAgent(proxyUrl: string): ProxyAgent {
       // false meant a proxied deployment could not reach a provider over h2
       // even where a direct one could.
       uri: proxyUrl,
-      ...(requestTimeout ? { headersTimeout: requestTimeout, bodyTimeout: requestTimeout } : {}),
+      ...resolveTransportTimeouts(),
     });
 
     proxyAgentCache.set(proxyUrl, agent);
@@ -51,14 +64,12 @@ export function getProxyAgent(proxyUrl: string): ProxyAgent {
 }
 
 const createHttpsAgent = (agentConfig: AgentConfig): UndiciAgent => {
-  const requestTimeout = resolveRequestTimeout();
-
   return new UndiciAgent({
     // `allowH2` is deliberately not set: undici defaults it to true, which
     // offers h2 alongside http/1.1 in ALPN and leaves the choice to the
     // provider. Setting it false here forced http/1.1, and did so for only
     // those deployments that reached this code at all — see `getHttpsAgent`.
-    ...(requestTimeout ? { headersTimeout: requestTimeout, bodyTimeout: requestTimeout } : {}),
+    ...resolveTransportTimeouts(),
     ...(agentConfig.tls ? { connect: agentConfig.tls } : {}),
   });
 };
