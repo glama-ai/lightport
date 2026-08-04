@@ -17,6 +17,7 @@ import { OpenAIChatCompleteResponse } from '../providers/openai/chatComplete';
 import { OpenAICompleteResponse } from '../providers/openai/complete';
 import { endpointStrings } from '../providers/types';
 import { captureException } from '../sentry/captureException';
+import { guardStreamTransform } from './streamTransformGuard';
 import type { GatewayContext } from '../types/GatewayContext';
 import { Params } from '../types/requestBody';
 import { getStreamModeSplitPattern, type SplitPatternType } from '../utils';
@@ -471,11 +472,18 @@ export function handleStreamingMode(
   const isSleepTimeRequired = proxyProvider === AZURE_OPEN_AI ? true : false;
   const encoder = new TextEncoder();
 
+  // Wrapped once here, where the provider is known, rather than at each of the
+  // readers' call sites. `responseTransformer` itself is left alone: the
+  // vertex-llama check below identifies it by name.
+  const guardedTransformer = responseTransformer
+    ? guardStreamTransform(responseTransformer, proxyProvider)
+    : undefined;
+
   if (proxyProvider === BEDROCK) {
     pipeToWriter(async () => {
       for await (const chunk of readAWSStream(
         reader,
-        responseTransformer,
+        guardedTransformer,
         fallbackChunkId,
         strictOpenAiCompliance,
         gatewayRequest,
@@ -488,7 +496,7 @@ export function handleStreamingMode(
       for await (const chunk of readStream(
         reader,
         splitPattern,
-        responseTransformer,
+        guardedTransformer,
         isSleepTimeRequired,
         fallbackChunkId,
         strictOpenAiCompliance,
