@@ -27,6 +27,53 @@ export const openAiErrorEvent = (error: OpenAIError): string =>
   `event: error\ndata: ${openAiErrorBody(error)}\n\n`;
 
 /**
+ * Reads an error frame back out of a stream chunk.
+ *
+ * The adapters re-frame a chatComplete stream into another API's vocabulary, and
+ * they recognise chunks by their `data:` line. An error event has an `event:`
+ * line ahead of that, so without this it is not skipped but dropped — and the
+ * completion the adapter synthesises when the stream ends would then report the
+ * failure as a finished answer, which is the thing being fixed one layer down.
+ */
+export const readOpenAiErrorEvent = (chunk: string): OpenAIError | undefined => {
+  // trimEnd rather than trim, so a `\r` from a CRLF stream does not end up
+  // inside a field value.
+  const lines = chunk
+    .trim()
+    .split('\n')
+    .map((line) => line.trimEnd());
+
+  // Matched whole: a prefix test would read `event: error_recovered` as fatal
+  // and cut a healthy stream short. The space after the colon is optional in
+  // SSE, so it cannot be part of what is matched.
+  const name = lines[0]?.startsWith('event:') ? lines[0].slice('event:'.length).trim() : undefined;
+
+  if (name !== 'error') {
+    return undefined;
+  }
+
+  // A payload may be split across several `data:` lines, which SSE joins with
+  // newlines. Reading only the first would leave the JSON unparseable, and the
+  // error would be dropped exactly as it was before — silently.
+  const data = lines
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice('data:'.length).replace(/^ /, ''))
+    .join('\n');
+
+  if (!data) {
+    return undefined;
+  }
+
+  try {
+    const { error } = JSON.parse(data);
+
+    return typeof error?.message === 'string' ? error : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
  * The same event, for appending to a stream that stopped at a point nobody
  * chose.
  *

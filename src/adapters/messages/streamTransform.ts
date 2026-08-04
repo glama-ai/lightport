@@ -4,6 +4,7 @@
  * Transforms Chat Completions SSE chunks to Anthropic Messages API SSE format.
  */
 
+import { readOpenAiErrorEvent } from '../../errors/openAiError';
 import { captureException } from '../../sentry/captureException';
 import { parseJson } from '../../utils/parseJson';
 import { randomUUID } from 'crypto';
@@ -24,6 +25,38 @@ interface StreamState {
  */
 export function transformStreamChunk(chunk: string, state: StreamState): string | undefined {
   const trimmed = chunk.trim();
+
+  // Nothing follows a failure. An upstream that kept talking would otherwise
+  // open a second message here — `message_start` and all — behind an error that
+  // has already been sent, and nothing would ever close it.
+  //
+  // Ahead of the error check below, because an error is a later chunk too: one
+  // arriving after `message_stop` would otherwise raise at a caller whose
+  // message had already ended cleanly.
+  if (state.completed) {
+    return undefined;
+  }
+
+  // An upstream failure, already flagged as one by the provider transform.
+  // Messages has its own error event, so it passes through as an error rather
+  // than being dropped for want of a `data:` line — and marking the message
+  // finished stops the `[DONE]` flush below closing it as `end_turn`, which
+  // would tell the caller the model had answered.
+  const upstreamError = readOpenAiErrorEvent(trimmed);
+
+  if (upstreamError) {
+    state.completed = true;
+
+    return `event: error\ndata: ${JSON.stringify({
+      error: {
+        message: upstreamError.message,
+        // Anthropic's own error object always names a type, so one is supplied
+        // rather than dropped by JSON.stringify for being undefined.
+        type: upstreamError.type ?? 'api_error',
+      },
+      type: 'error',
+    })}\n\n`;
+  }
 
   // Handle [DONE]
   if (trimmed === 'data: [DONE]') {

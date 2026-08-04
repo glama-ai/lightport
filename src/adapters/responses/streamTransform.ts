@@ -5,6 +5,7 @@
  * This enables streaming support for providers that only support Chat Completions.
  */
 
+import { readOpenAiErrorEvent, type OpenAIError } from '../../errors/openAiError';
 import { captureException } from '../../sentry/captureException';
 import { parseJson } from '../../utils/parseJson';
 import { randomUUID } from 'crypto';
@@ -42,11 +43,20 @@ interface StreamState {
  */
 function buildResponseSnapshot(
   state: StreamState,
-  status: 'in_progress' | 'completed' | 'incomplete',
+  status: 'in_progress' | 'completed' | 'failed' | 'incomplete',
   includeOutput: boolean = false,
   finalText?: string,
+  error?: OpenAIError,
 ): any {
   const output: any[] = [];
+
+  // What an item still being written is worth reporting as. Only a response
+  // that ran to the end has completed items: anything salvaged from a failure
+  // is a half-written one, and calling it `completed` presents a truncated
+  // sentence as the model's answer — or, for a tool call, a fragment of JSON as
+  // arguments a caller is invited to parse.
+  const itemStatus =
+    status === 'in_progress' ? 'in_progress' : status === 'completed' ? 'completed' : 'incomplete';
 
   if (includeOutput) {
     if (state.reasoningItemId && state.accumulatedReasoningText) {
@@ -62,7 +72,7 @@ function buildResponseSnapshot(
         id: state.outputItemId,
         type: 'message',
         role: 'assistant',
-        status: status === 'in_progress' ? 'in_progress' : 'completed',
+        status: itemStatus,
         content: [
           {
             type: 'output_text',
@@ -81,7 +91,7 @@ function buildResponseSnapshot(
         call_id: tc.callId,
         name: tc.name,
         arguments: tc.arguments,
-        status: 'completed',
+        status: itemStatus,
       });
     }
   }
@@ -97,7 +107,10 @@ function buildResponseSnapshot(
     previous_response_id: null,
     instructions: null,
     output,
-    error: null,
+    // Where the Responses API puts a failed response's reason. The terminal
+    // event is the natural thing for a client to read, and `status: "failed"`
+    // with nothing beside it is a failure reported without saying what it was.
+    error: error ? { code: error.code ?? error.type ?? null, message: error.message } : null,
     tools: [],
     tool_choice: 'auto',
     truncation: 'disabled',
@@ -218,6 +231,58 @@ function buildToolCallCompletionEvents(state: StreamState): string[] {
 export function transformStreamChunk(chunk: string, state: StreamState): string | undefined {
   // Skip empty chunks and [DONE]
   const trimmed = chunk.trim();
+
+  // Nothing follows a failure, and nothing follows a completion. Either way the
+  // response has been given its ending, and a later chunk could only contradict
+  // it — with no terminal event left to close whatever it started.
+  //
+  // Ahead of the error check below, because an error is a later chunk too: an
+  // upstream that reports one after its `[DONE]` would otherwise be given a
+  // `response.failed` behind the `response.completed` already sent, leaving two
+  // terminal events on one response id.
+  if (state.completed) {
+    return undefined;
+  }
+
+  // An upstream failure, already flagged as one by the provider transform.
+  // Responses has its own error event, so it passes through as an error rather
+  // than being dropped for want of a `data:` line — and marking the response
+  // finished stops the `[DONE]` flush below reporting it `completed`, which
+  // would tell the caller the model had answered.
+  const upstreamError = readOpenAiErrorEvent(trimmed);
+
+  if (upstreamError) {
+    state.completed = true;
+
+    const events = [
+      `event: error\ndata: ${JSON.stringify({
+        // `code` is required by the event schema, so it never resolves to
+        // undefined and gets dropped by JSON.stringify.
+        code: upstreamError.code ?? upstreamError.type ?? null,
+        message: upstreamError.message,
+        param: null,
+        sequence_number: state.sequenceNumber++,
+        type: 'error',
+      })}\n\n`,
+    ];
+
+    // A response that was announced has to be given an end, or a client
+    // following the lifecycle waits out a stream that is never coming back. One
+    // that never started has nothing to report a status for, and the error
+    // above is the whole account of it.
+    if (state.hasStarted) {
+      events.push(
+        `event: response.failed\ndata: ${JSON.stringify({
+          response: buildResponseSnapshot(state, 'failed', true, undefined, upstreamError),
+          sequence_number: state.sequenceNumber++,
+          type: 'response.failed',
+        })}\n\n`,
+      );
+    }
+
+    return events.join('');
+  }
+
   if (!trimmed || trimmed === 'data: [DONE]') {
     if (trimmed === 'data: [DONE]' && state.hasStarted && !state.completed) {
       state.completed = true;

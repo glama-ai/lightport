@@ -1,4 +1,8 @@
-import { openAiErrorEvent, openAiErrorEventAfterPartialFrame } from '../openAiError';
+import {
+  openAiErrorEvent,
+  openAiErrorEventAfterPartialFrame,
+  readOpenAiErrorEvent,
+} from '../openAiError';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { describe, expect, it } from 'vitest';
 
@@ -49,6 +53,49 @@ describe('openAiErrorEventAfterPartialFrame', () => {
     // needed, or every clean truncation gains a phantom chunk.
     expect(events).toHaveLength(2);
     expect(events[1].event).toBe('error');
+  });
+});
+
+describe('readOpenAiErrorEvent', () => {
+  // Every miss here fails the same way: the error is dropped, the adapter's
+  // completion flush runs, and the caller is told the model answered. A silent
+  // return to the exact bug this exists to close.
+  it('reads back what the gateway writes', () => {
+    expect(readOpenAiErrorEvent(openAiErrorEvent(error).trim())).toMatchObject(error);
+  });
+
+  it('reads a payload split across several data lines', () => {
+    const body = ['event: error', 'data: {"error":', 'data: {"message":"stopped short"}}'].join(
+      '\n',
+    );
+
+    expect(readOpenAiErrorEvent(body)?.message).toBe('stopped short');
+  });
+
+  it('reads a data line written without the optional space', () => {
+    expect(readOpenAiErrorEvent('event: error\ndata:{"error":{"message":"m"}}')?.message).toBe('m');
+  });
+
+  it('reads a frame delimited with CRLF', () => {
+    expect(
+      readOpenAiErrorEvent('event: error\r\ndata: {"error":{"message":"m"}}\r\n')?.message,
+    ).toBe('m');
+  });
+
+  it('does not treat an event merely named like an error as one', () => {
+    // A prefix test would cut a healthy stream short here, and report a failure
+    // that never happened.
+    const body = 'event: error_recovered\ndata: {"error":{"message":"recovered"}}';
+
+    expect(readOpenAiErrorEvent(body)).toBeUndefined();
+  });
+
+  it('ignores anything that is not an error event', () => {
+    expect(readOpenAiErrorEvent('data: {"choices":[]}')).toBeUndefined();
+    expect(readOpenAiErrorEvent('data: [DONE]')).toBeUndefined();
+    expect(readOpenAiErrorEvent('event: error\ndata: not json')).toBeUndefined();
+    expect(readOpenAiErrorEvent('event: error\ndata: {"error":"a string"}')).toBeUndefined();
+    expect(readOpenAiErrorEvent('event: error')).toBeUndefined();
   });
 });
 

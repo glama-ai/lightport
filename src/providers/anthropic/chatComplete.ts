@@ -1,3 +1,4 @@
+import { openAiErrorEvent } from '../../errors/openAiError';
 import { fileExtensionMimeTypeMap } from '../../globals';
 import {
   Params,
@@ -697,26 +698,24 @@ export const getAnthropicStreamChunkTransform = (
 
     const parsedChunk: AnthropicChatCompleteStreamResponse = parseJson(chunk);
 
+    // An upstream failure, and it has to arrive as one.
+    //
+    // This used to be dressed as an ordinary chunk — empty content, the error
+    // type smuggled into `finish_reason` — and then closed with `[DONE]`, which
+    // is the sentinel for a completion that ran to the end. Every client
+    // therefore read an overload or a rate limit as a model that had finished
+    // and chosen to say nothing, and returned that to whoever asked. A caller
+    // cannot check an answer it was told is complete, so the failure surfaced,
+    // if at all, as a mysteriously empty response far from here.
+    //
+    // The message and type are mapped as AnthropicErrorResponseTransform maps
+    // them, so an error reads the same whether or not the caller asked for a
+    // stream.
     if (parsedChunk.type === 'error' && parsedChunk.error) {
-      return (
-        `data: ${JSON.stringify({
-          id: fallbackId,
-          object: 'chat.completion.chunk',
-          created: Math.floor(Date.now() / 1000),
-          model: '',
-          provider: provider,
-          choices: [
-            {
-              finish_reason: parsedChunk.error.type,
-              delta: {
-                content: '',
-              },
-            },
-          ],
-        })}` +
-        '\n\n' +
-        'data: [DONE]\n\n'
-      );
+      return openAiErrorEvent({
+        message: `${provider} error: ${parsedChunk.error.message}`,
+        type: parsedChunk.error.type,
+      });
     }
 
     if (parsedChunk.type === 'message_start' && parsedChunk.message?.usage) {
