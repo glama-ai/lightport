@@ -144,10 +144,9 @@ async function postToProvider(
   }
 
   // Refines the tags `handleRoute` derived from headers. `provider` is the one
-  // resolved from the config, which is the only accurate value when a config
-  // carries `targets` and never names a provider in a header. `originalFn` is
-  // the endpoint the caller asked for, since `fn` becomes chatComplete once an
-  // adapter takes over.
+  // resolved from the config, which is the accurate value when the header named
+  // nothing and the config did. `originalFn` is the endpoint the caller asked
+  // for, since `fn` becomes chatComplete once an adapter takes over.
   setRequestTags({
     adapted: adapterCtx.isActive,
     endpoint: adapterCtx.originalFn,

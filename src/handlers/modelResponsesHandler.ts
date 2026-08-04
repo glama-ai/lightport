@@ -3,7 +3,6 @@ import { logger } from '../logger';
 import { endpointStrings } from '../providers/types';
 import { captureException } from '../sentry/captureException';
 import type { GatewayContext } from '../types/GatewayContext';
-import { Options } from '../types/requestBody';
 import { constructConfigFromRequestHeaders } from '../utils/request';
 import { tryPost } from './handlerUtils';
 
@@ -12,7 +11,7 @@ function modelResponsesHandler(endpoint: endpointStrings, method: 'POST' | 'GET'
     try {
       const request = c.get('requestBodyData');
       const requestHeaders = c.get('mappedHeaders');
-      const providerOptions = constructConfigFromRequestHeaders(requestHeaders) as Options;
+      const providerOptions = constructConfigFromRequestHeaders(requestHeaders);
 
       return await tryPost(
         c,

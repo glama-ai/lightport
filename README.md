@@ -20,7 +20,9 @@ Retries, secret management, caching, rate limiting, and other operational concer
 
 Lightport started as a fork of [Portkey AI Gateway](https://github.com/portkey-ai/gateway). Our sole use case for the gateway has always been making AI providers OpenAI-compatible – we only needed the request/response transformation layer.
 
-Since then, Portkey has evolved into a full-featured AI gateway with guardrails, fallbacks, automatic retries, load balancing, request timeouts, smart caching, usage analytics, cost management, and more. We believe those capabilities belong at a higher abstraction level – which is what [Glama](https://glama.ai/ai/gateway) provides – rather than in the gateway itself.
+Since then, Portkey has evolved into a full-featured AI gateway with guardrails, fallbacks, automatic retries, load balancing, smart caching, usage analytics, cost management, and more. We believe those capabilities belong at a higher abstraction level – which is what [Glama](https://glama.ai/ai/gateway) provides – rather than in the gateway itself.
+
+Concretely, Lightport routes each request to a single provider, once. A config carrying `strategy` or `targets` is refused, because nothing here resolves a target; a config carrying `retry` or `cache` is served with a warning in the log, because nothing here acts on either. `request_timeout` is the exception in that list and is honoured.
 
 Since forking, we have fixed numerous bugs, added integration tests for every provider, and continue to actively maintain the gateway as it directly powers [Glama](https://glama.ai/ai/gateway).
 

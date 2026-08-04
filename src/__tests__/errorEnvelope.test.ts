@@ -83,19 +83,25 @@ describe('errors the gateway raises itself', () => {
   });
 
   it('bounds what a caller can put in the field every client logs', async () => {
-    // The issues come from the caller's own config, nested targets recurse, and
-    // a rejected provider name is reported with the full list of valid ones.
+    // The issues come from the caller's own config: an array is reported an
+    // entry at a time, and a rejected provider name is reported with the whole
+    // list of valid ones. The worst case used to be far worse — nested `targets`
+    // recursed, so a config that still fitted in a header could produce
+    // thousands of issues — but targets are refused ahead of validation now, so
+    // what is left is bounded by the issue cap and the length cap together.
     const { body, status } = await post('/v1/chat/completions', {
       authorization: 'Bearer sk-not-a-real-key',
       'x-lightport-config': JSON.stringify({
-        provider: 'openai',
-        targets: Array.from({ length: 400 }, () => ({ provider: 'nope' })),
+        provider: 'nope',
+        api_key: 'k',
+        forward_headers: Array.from({ length: 500 }, () => 1),
       }),
     });
 
     expect(status).toBe(400);
     expect(body.error.message.length).toBeLessThan(2_100);
     expect(body.error.message).toContain('Invalid config passed');
+    expect(body.error.message).toContain('more)');
   });
 
   it('rejects a malformed config without echoing it back', async () => {
@@ -128,6 +134,96 @@ describe('errors the gateway raises itself', () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.json().error).toMatchObject({ type: 'invalid_request_error' });
+  });
+
+  // `tryPost` calls one provider once and there is no target resolution, so a
+  // config naming targets names no provider either and the request was already
+  // dead — on `Provider ""`, a reason that sent the caller to the wrong place.
+  it.each([
+    ['strategy and targets', { strategy: { mode: 'fallback' }, targets: [{ provider: 'openai' }] }],
+    ['targets alone', { targets: [{ provider: 'openai', api_key: 'k' }] }],
+  ])('refuses config it cannot route: %s', async (_name, config) => {
+    const { body, status } = await post('/v1/chat/completions', {
+      authorization: 'Bearer sk-not-a-real-key',
+      'x-lightport-config': JSON.stringify(config),
+    });
+
+    expect(status).toBe(400);
+    expect(body.error.type).toBe('invalid_request_error');
+    expect(body.error.message).toContain('Unsupported config');
+  });
+
+  it.each([
+    ['retry', { provider: 'openai', api_key: 'k', retry: { attempts: 3 } }],
+    ['cache', { provider: 'openai', api_key: 'k', cache: { mode: 'simple' } }],
+    ['weight', { provider: 'openai', api_key: 'k', weight: 1 }],
+    ['on_status_codes', { provider: 'openai', api_key: 'k', on_status_codes: [429] }],
+    ['retry alone, provider from the header', { retry: { attempts: 3 } }],
+  ])('serves config it does not act on, and says so in the log: %s', async (_name, config) => {
+    // Nothing here is honoured, and the warning is where that is said. Refusing
+    // instead would answer a setting that quietly does nothing with a gateway
+    // that serves nothing — at deploy time, and hardest on whoever was careful
+    // enough to configure retries at all. A caller arriving from a gateway that
+    // did implement these should not meet an outage for it.
+    const { status } = await post('/v1/chat/completions', {
+      authorization: 'Bearer sk-not-a-real-key',
+      'x-lightport-provider': 'openai',
+      'x-lightport-config': JSON.stringify(config),
+    });
+
+    expect(status).not.toBe(400);
+  });
+
+  it('names the keys it is refusing', async () => {
+    // A fallback config used to die on `Provider "" is not supported` — naming a
+    // provider the caller never wrote, because targets are never resolved and
+    // the provider field stays empty. The reason has to be the actual one.
+    const { body } = await post('/v1/chat/completions', {
+      authorization: 'Bearer sk-not-a-real-key',
+      'x-lightport-config': JSON.stringify({
+        strategy: { mode: 'loadbalance' },
+        targets: [{ provider: 'openai' }],
+      }),
+    });
+
+    expect(body.error.message).toContain('strategy');
+    expect(body.error.message).toContain('targets');
+    expect(body.error.message).not.toContain('Provider ""');
+  });
+
+  it('does not answer one refusal by advertising another', async () => {
+    // The schema's own message used to offer 'strategy' and 'targets', 'cache'
+    // and 'retry' as ways to make a config valid — three keys the check above
+    // refuses outright. A caller who took the advice got a second 400 for
+    // having followed it.
+    const { body, status } = await post('/v1/chat/completions', {
+      authorization: 'Bearer sk-not-a-real-key',
+      'x-lightport-config': JSON.stringify({ provider: 'openai' }),
+    });
+
+    expect(status).toBe(400);
+    expect(body.error.message).toContain('Invalid configuration');
+
+    for (const refused of ['strategy', 'targets', 'cache', 'retry']) {
+      expect(body.error.message).not.toContain(refused);
+    }
+  });
+
+  it.each([
+    ['custom_host', { provider: 'openai', api_key: 'k', custom_host: 'https://h.example.com' }],
+    ['request_timeout', { provider: 'openai', api_key: 'k', request_timeout: 5_000 }],
+    ['forward_headers', { provider: 'openai', api_key: 'k', forward_headers: ['x-trace'] }],
+  ])('still accepts config it does honour: %s', async (_name, config) => {
+    // The other half of the refusal, and the one that keeps it honest: these
+    // three reach `Options` as camelCase and are read on the request path, so
+    // refusing them would break working callers. Anything but a 400 means the
+    // request got past validation.
+    const { status } = await post('/v1/chat/completions', {
+      authorization: 'Bearer sk-not-a-real-key',
+      'x-lightport-config': JSON.stringify(config),
+    });
+
+    expect(status).not.toBe(400);
   });
 
   it.each([

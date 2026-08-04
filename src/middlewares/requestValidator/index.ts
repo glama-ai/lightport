@@ -1,5 +1,6 @@
 import { openAiErrorResponse } from '../../errors/openAiError';
 import { CONTENT_TYPES, HEADER_KEYS, POWERED_BY, VALID_PROVIDERS } from '../../globals';
+import { logger } from '../../logger';
 import { captureException } from '../../sentry/captureException';
 import type { GatewayContext } from '../../types/GatewayContext';
 import { parseJson } from '../../utils/parseJson';
@@ -16,6 +17,38 @@ const invalidRequest = (message: string): Response =>
 /** Enough to fix the config by, far short of enough to fill a log with. */
 const MAX_REPORTED_CONFIG_ISSUES = 10;
 const MAX_MESSAGE_LENGTH = 2_000;
+
+/**
+ * Config naming a shape this gateway cannot route at all.
+ *
+ * `tryPost` calls one provider once, and there is no target resolution. A config
+ * naming targets therefore never names a provider, and the request already dies
+ * — on `Provider "" is not supported`, which names a provider the caller never
+ * wrote and reads as though the provider list were the thing to go and fix.
+ * Refusing takes away nothing that worked and replaces that with the true
+ * reason.
+ */
+const UNROUTABLE_CONFIG = ['strategy', 'targets'] as const;
+
+/**
+ * Config that is read, validated, converted to camelCase and then dropped.
+ *
+ * There is no retry loop and no response cache. An operator who sets `retry`
+ * believes they have retries, and finds out during the incident the setting was
+ * for — which is worth saying, loudly and in the log they will read afterwards.
+ *
+ * Said rather than enforced, because these requests succeed today. Refusing them
+ * would trade a setting that quietly does nothing for a gateway that serves
+ * nothing, at deploy time rather than at the incident, and it would land hardest
+ * on whoever was careful enough to have configured retries in the first place.
+ * A caller arriving from a gateway that did implement these — which is where
+ * this config shape comes from — should not be met with an outage for it.
+ *
+ * `weight` and `on_status_codes` are deliberately absent from both lists. They
+ * decorate a config rather than promise anything: standalone, with no strategy
+ * to weigh and no fallback to trigger, `weight: 1` misleads nobody.
+ */
+const IGNORED_CONFIG = ['retry', 'cache'] as const;
 
 const truncate = (message: string): string =>
   message.length > MAX_MESSAGE_LENGTH ? `${message.slice(0, MAX_MESSAGE_LENGTH)}…` : message;
@@ -67,10 +100,34 @@ export const requestValidator = (c: GatewayContext): Response | null => {
   if (requestHeaders[`x-${POWERED_BY}-config`]) {
     try {
       const parsedConfig = parseJson<Record<string, any>>(requestHeaders[`x-${POWERED_BY}-config`]);
-      if (
-        !requestHeaders[`x-${POWERED_BY}-provider`] &&
-        !(parsedConfig.provider || parsedConfig.targets)
-      ) {
+
+      // Ahead of the schema, so the answer is the true one. Validated first, a
+      // targets config fails on whatever the nested shape got wrong — a reason
+      // that reads as though fixing it would help, when nothing here resolves a
+      // target at all.
+      const unroutable = UNROUTABLE_CONFIG.filter((key) => parsedConfig[key] !== undefined);
+
+      if (unroutable.length > 0) {
+        return invalidRequest(
+          `Unsupported config: ${unroutable.join(', ')}. ` +
+            'This gateway routes each request to a single provider; ' +
+            'failover and load balancing are not implemented. ' +
+            'Remove these keys and handle them in the caller.',
+        );
+      }
+
+      const ignored = IGNORED_CONFIG.filter((key) => parsedConfig[key] !== undefined);
+
+      if (ignored.length > 0) {
+        logger.warn(
+          { ignored },
+          'config names behaviour this gateway does not implement and will not act on',
+        );
+      }
+
+      // `targets` is refused above, so a config that reaches here and names no
+      // provider has none to be found anywhere.
+      if (!requestHeaders[`x-${POWERED_BY}-provider`] && !parsedConfig.provider) {
         return invalidRequest(
           `Either x-${POWERED_BY}-provider needs to be passed. Or the x-${POWERED_BY}-config header should have a valid config with provider details in it.`,
         );

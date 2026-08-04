@@ -15,13 +15,16 @@ import {
   WORKERS_AI,
 } from '../globals';
 import { captureException } from '../sentry/captureException';
-import { Options, Targets } from '../types/requestBody';
+import { Options } from '../types/requestBody';
 import { convertKeysToCamelCase } from '../utils';
 import { parseJson } from './parseJson';
 
+// `Targets` was the other thing this could return, for a config that named a
+// list of them instead of a provider. Validation refuses that config now, so
+// every caller's `as Options` was describing the only case left.
 export function constructConfigFromRequestHeaders(
   requestHeaders: Record<string, any>,
-): Options | Targets {
+): Options {
   // Each provider's headers are read only if that provider is the one being
   // asked for. A request names one provider, so building all fifteen of these up
   // front spent some eighty header lookups — every key concatenated from
@@ -200,7 +203,10 @@ export function constructConfigFromRequestHeaders(
     parsedConfigJson.default_input_guardrails = defaultsConfig.input_guardrails;
     parsedConfigJson.default_output_guardrails = defaultsConfig.output_guardrails;
 
-    if (!parsedConfigJson.provider && !parsedConfigJson.targets) {
+    // `targets` used to be the other way a config could name where to go, and
+    // is refused during validation now — so a config reaching here without a
+    // provider has one place left to get one from.
+    if (!parsedConfigJson.provider) {
       parsedConfigJson.provider = requestHeaders[`x-${POWERED_BY}-provider`];
       parsedConfigJson.api_key = requestHeaders['authorization']?.replace('Bearer ', '');
 

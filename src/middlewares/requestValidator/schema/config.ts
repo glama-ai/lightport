@@ -217,7 +217,6 @@ export const configSchema: any = z
   .refine(
     (value) => {
       const hasProviderApiKey = value.provider !== undefined && value.api_key !== undefined;
-      const hasModeTargets = value.strategy !== undefined && value.targets !== undefined;
       const isOllamaProvider = value.provider === OLLAMA;
       const isTritonProvider = value.provider === TRITON;
       const isVertexAIProvider =
@@ -228,9 +227,17 @@ export const configSchema: any = z
       const isAzureProvider =
         value.provider === AZURE_OPEN_AI && (value.api_key || value.azure_ad_token);
 
+      // `strategy` and `targets` are refused ahead of validation now, so nothing
+      // carrying them reaches here and a condition testing for them could not
+      // hold. `cache` and `retry` are only warned about, so they still arrive
+      // and still make a config valid — a config that worked yesterday is not
+      // going to stop working over a key the gateway merely ignores.
+      //
+      // Neither is named in the message below. "Add retry to make this valid" is
+      // bad advice for a setting nothing acts on, and the message is read by
+      // someone who has just been told their config is wrong.
       return (
         hasProviderApiKey ||
-        hasModeTargets ||
         value.cache ||
         value.retry ||
         value.request_timeout ||
@@ -247,7 +254,7 @@ export const configSchema: any = z
     },
     {
       message:
-        "Invalid configuration. It must have either 'provider' and 'api_key', or 'strategy' and 'targets', or 'cache', or 'retry', or 'request_timeout'",
+        "Invalid configuration. It must have either 'provider' and 'api_key', or 'request_timeout'",
     },
   )
   .refine(

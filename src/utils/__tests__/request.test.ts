@@ -124,13 +124,18 @@ describe('constructConfigFromRequestHeaders', () => {
       expect(config.anthropicVersion).toBeUndefined();
     });
 
-    it('leaves a config carrying targets alone', () => {
+    it('takes the provider from the header when the config names none', () => {
+      // `targets` used to be the other way a config could say where to go, and
+      // was left alone here on the strength of it. Validation refuses that
+      // config now — nothing resolves a target, so it named no provider either
+      // — which leaves the header as the only remaining source.
       const config = configFor('openai', {
-        'x-lightport-config': JSON.stringify({ targets: [{ provider: 'openai', api_key: 'k' }] }),
+        'x-lightport-config': JSON.stringify({ api_key: 'in-config' }),
       });
 
-      expect(config.targets).toHaveLength(1);
-      expect(config.openaiOrganization).toBeUndefined();
+      expect(config.provider).toBe('openai');
+      expect(config.apiKey).toBe('sk-test');
+      expect(config.openaiOrganization).toBe('org');
     });
   });
 
