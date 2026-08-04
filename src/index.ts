@@ -220,7 +220,14 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
 
     const callerGone = getClientAbortSignal();
     const reader = response.body.getReader();
-    let truncated = false;
+
+    // What became of the body, decided at whichever of the pump's exits is
+    // taken and accounted for once, below. The pump can leave three ways and
+    // only one of them throws, so recording this from the catch alone left a
+    // caller who vanished while the pump was parked on a full socket — the very
+    // caller most likely to leave that way — logged as a delivery.
+    let hangup = false;
+    let failure: { err: unknown } | undefined;
 
     try {
       while (true) {
@@ -229,7 +236,10 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
         // Node reports a vanished caller by destroying the socket rather than by
         // throwing — write() merely returns false — so this has to be checked
         // for. Without it the pump runs the whole stream into a dead socket.
-        if (raw.destroyed) break;
+        if (raw.destroyed) {
+          hangup = true;
+          break;
+        }
 
         // write() also returns false once the socket's buffer is full, and a
         // caller reading slower than the provider writes would otherwise have
@@ -239,75 +249,111 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
         if (!raw.write(value) && !raw.destroyed) {
           try {
             await once(raw, 'drain', callerGone ? { signal: callerGone } : {});
-          } catch {
+          } catch (err) {
+            // `once` rejects on the signal and on an `error` from the response
+            // alike. A caller that walked away while the pump waited here is a
+            // hangup; a socket that failed under it is a truncation, and filing
+            // that as a hangup would discard the only report of a caller left
+            // short — and end the body as though it were whole.
+            if (callerGone?.aborted) {
+              hangup = true;
+            } else {
+              failure = { err };
+            }
+
             break;
           }
         }
       }
     } catch (err) {
-      truncated = true;
-
       // A hangup is not a fault: the gateway aborted the provider on the
-      // caller's behalf, which surfaces as an AbortError, and a cancelled writer
-      // rejects with undefined. Anything else is a genuine failure, and it is
-      // reported here because this is where it becomes the caller's problem.
-      const causedByHangup = err === undefined || (err as { name?: string })?.name === 'AbortError';
+      // caller's behalf, and a cancelled writer rejects with undefined.
+      // Anything else is a genuine failure.
+      //
+      // The signal is asked first because it is the authority on the question,
+      // and it is what the pre-headers half of this policy already uses. The
+      // name is only a fallback for a stream with no signal in scope: undici's
+      // own RequestAbortedError is named AbortError too, so on its own it would
+      // quietly file every failure on such a path as a hangup.
+      const causedByHangup =
+        err === undefined ||
+        (callerGone?.aborted ?? (err as { name?: string })?.name === 'AbortError');
 
-      if (!causedByHangup) {
-        logger.error({ err }, 'response stream truncated');
-        captureException({ error: err, message: 'response stream truncated' });
-      }
-    } finally {
-      recordStage('send', performance.now() - startedWriting);
-
-      void reader.cancel().catch(() => {});
-
-      if (raw.destroyed) {
-        // The caller is already gone; there is nobody left to signal.
-      } else if (truncated) {
-        // The status line and headers went out long before the failure, so they
-        // cannot be revised, and the body is the only channel left. A stream can
-        // say it there in its own vocabulary, and being part of the payload the
-        // notice reaches whoever forwards these bytes on — which is precisely
-        // where the hangup below stops being legible, a proxy that has buffered
-        // a body being free to end it cleanly and usually doing so. Anything
-        // else the gateway streams — audio, an image, a body it never framed —
-        // has no such vocabulary, and appending to it would corrupt the very
-        // thing the caller is trying to salvage.
-        //
-        // Media types are case-insensitive and this one is the provider's, not
-        // ours: streamHandler forwards it verbatim.
-        const isEventStream = headers['content-type']
-          ?.toLowerCase()
-          .startsWith(CONTENT_TYPES.EVENT_STREAM);
-
-        // The socket, not the response: `_writeRaw` drops the write callback
-        // when the socket is gone, and the socket is marked synchronously while
-        // the response only follows on the next tick. Between the two, waiting
-        // on a flush that will never be reported costs the whole timeout to
-        // learn what is already knowable — and there is nobody there to read it.
-        if (isEventStream && !raw.socket?.destroyed) {
-          // The hangup below is the signal that must not be lost. Were the
-          // announcement to throw, the socket would be left open carrying
-          // neither a terminating chunk nor a close, and the caller would wait
-          // out a server timeout to learn nothing — strictly worse than the
-          // silence this whole change is replacing.
-          try {
-            await announceTruncation(raw, truncationEventFor(route));
-          } catch {
-            // Nothing to add: the notice was best effort and the hangup says
-            // it too.
-          }
-        }
-
-        // Hanging up without writing the terminating chunk is what tells a
-        // caller that reads neither frame. end() here would frame a
-        // half-finished completion as a whole one, and no caller could tell the
-        // difference.
-        raw.destroy();
+      if (causedByHangup) {
+        hangup = true;
       } else {
-        raw.end();
+        failure = { err };
       }
+    }
+
+    // Whatever the exit, something is recorded. `status` was written when the
+    // headers went out, which for a stream is long before the body was
+    // delivered, so what became of the response afterwards is not in it — and a
+    // request that failed its caller, one whose caller walked away, and one
+    // delivered whole are otherwise the same 200 in the log.
+    if (failure) {
+      // Marked before the capture below so the event reporting the failure
+      // carries the tag.
+      setRequestTags({ truncated: true });
+      describeRequest({ truncated: true });
+
+      logger.error({ err: failure.err }, 'response stream truncated');
+      captureException({ error: failure.err, message: 'response stream truncated' });
+    } else if (hangup) {
+      describeRequest({ disconnected: true });
+    }
+
+    const endedEarly = hangup || Boolean(failure);
+
+    recordStage('send', performance.now() - startedWriting);
+
+    void reader.cancel().catch(() => {});
+
+    if (raw.destroyed) {
+      // The caller is already gone; there is nobody left to signal.
+    } else if (endedEarly) {
+      // The status line and headers went out long before the failure, so they
+      // cannot be revised, and the body is the only channel left. A stream can
+      // say it there in its own vocabulary, and being part of the payload the
+      // notice reaches whoever forwards these bytes on — which is precisely
+      // where the hangup below stops being legible, a proxy that has buffered
+      // a body being free to end it cleanly and usually doing so. Anything
+      // else the gateway streams — audio, an image, a body it never framed —
+      // has no such vocabulary, and appending to it would corrupt the very
+      // thing the caller is trying to salvage.
+      //
+      // Media types are case-insensitive and this one is the provider's, not
+      // ours: streamHandler forwards it verbatim.
+      const isEventStream = headers['content-type']
+        ?.toLowerCase()
+        .startsWith(CONTENT_TYPES.EVENT_STREAM);
+
+      // The socket, not the response: `_writeRaw` drops the write callback
+      // when the socket is gone, and the socket is marked synchronously while
+      // the response only follows on the next tick. Between the two, waiting
+      // on a flush that will never be reported costs the whole timeout to
+      // learn what is already knowable — and there is nobody there to read it.
+      if (isEventStream && !raw.socket?.destroyed) {
+        // The hangup below is the signal that must not be lost. Were the
+        // announcement to throw, the socket would be left open carrying
+        // neither a terminating chunk nor a close, and the caller would wait
+        // out a server timeout to learn nothing — strictly worse than the
+        // silence this whole change is replacing.
+        try {
+          await announceTruncation(raw, truncationEventFor(route));
+        } catch {
+          // Nothing to add: the notice was best effort and the hangup says
+          // it too.
+        }
+      }
+
+      // Hanging up without writing the terminating chunk is what tells a
+      // caller that reads neither frame. end() here would frame a
+      // half-finished completion as a whole one, and no caller could tell the
+      // difference.
+      raw.destroy();
+    } else {
+      raw.end();
     }
   };
 

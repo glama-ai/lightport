@@ -32,6 +32,24 @@ export type RequestAttributes = {
   provider?: unknown;
   status?: number;
   stream?: boolean;
+  /**
+   * Set when the caller gave up before the response finished.
+   *
+   * Not a fault, but not a delivery either, and the pair below is what stops the
+   * two being read as one. Before the headers go out a hangup is recorded as a
+   * 499; after them the status is spent, and without this a caller who took one
+   * chunk of sixty is logged exactly like one who read them all.
+   */
+  disconnected?: boolean;
+  /**
+   * Set when a response the caller was still waiting for ended early.
+   *
+   * `status` is written when the headers go out, and for a stream that is long
+   * before the body has been delivered — so a truncated response is recorded as
+   * the 200 it opened with and reads as a success in every log and dashboard
+   * built on that. This is the part the status can no longer say.
+   */
+  truncated?: boolean;
 };
 
 export type RequestTiming = {

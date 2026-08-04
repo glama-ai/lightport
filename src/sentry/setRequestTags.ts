@@ -20,6 +20,8 @@ export type RequestTags = {
   route?: unknown;
   stream?: boolean;
   traceId?: unknown;
+  /** Set when a response the caller was still waiting for ended early. */
+  truncated?: boolean;
 };
 
 const TAG_KEYS: Record<keyof RequestTags, string> = {
@@ -30,6 +32,7 @@ const TAG_KEYS: Record<keyof RequestTags, string> = {
   route: 'route',
   stream: 'stream',
   traceId: 'trace_id',
+  truncated: 'truncated',
 };
 
 const toTagValue = (value: unknown): string | null => {
