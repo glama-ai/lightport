@@ -1,4 +1,4 @@
-import { RouterError } from '../errors/RouterError';
+import { gatewayErrorResponse } from '../errors/gatewayErrorResponse';
 import { logger } from '../logger';
 import { captureException } from '../sentry/captureException';
 import type { GatewayContext } from '../types/GatewayContext';
@@ -28,25 +28,6 @@ export async function chatCompletionsHandler(c: GatewayContext): Promise<Respons
       message: 'chatCompletions handler error',
     });
 
-    let statusCode = 500;
-    let errorMessage = 'Something went wrong';
-
-    if (err instanceof RouterError) {
-      statusCode = 400;
-      errorMessage = err.message;
-    }
-
-    return new Response(
-      JSON.stringify({
-        status: 'failure',
-        message: errorMessage,
-      }),
-      {
-        status: statusCode,
-        headers: {
-          'content-type': 'application/json',
-        },
-      },
-    );
+    return gatewayErrorResponse(err);
   }
 }

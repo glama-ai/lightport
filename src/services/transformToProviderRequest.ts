@@ -140,7 +140,11 @@ const transformToProviderRequestJSON = (
   }
 
   if (!providerConfig) {
-    throw new GatewayError(`${fn} is not supported by ${provider}`);
+    // The caller asked a provider for something it does not do — 53 of the 75
+    // registered providers have no `complete` config, to take the common case.
+    // Raised as a 500 this told every OpenAI client to retry, three times with
+    // backoff, a request that could not succeed on any of them.
+    throw new GatewayError(`${fn} is not supported by ${provider}`, 400);
   }
 
   return transformUsingProviderConfig(providerConfig, params, providerOptions);

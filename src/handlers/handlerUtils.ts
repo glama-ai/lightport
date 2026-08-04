@@ -1,5 +1,6 @@
 import { getClientAbortSignal } from '../context/clientAbort';
 import { GatewayError } from '../errors/GatewayError';
+import { openAiErrorResponse } from '../errors/openAiError';
 import { HEADER_KEYS, POWERED_BY, RESPONSE_HEADER_KEYS, CONTENT_TYPES } from '../globals';
 import { describeRequest, measureStage, recordStage } from '../observability/requestTiming';
 import Providers from '../providers';
@@ -332,12 +333,7 @@ async function postToProvider(
       throw err;
     }
 
-    response = new Response(
-      JSON.stringify({
-        error: { message: 'Request timed out', type: 'timeout_error' },
-      }),
-      { status: 408, headers: { 'content-type': 'application/json' } },
-    );
+    response = openAiErrorResponse({ message: 'Request timed out', type: 'timeout_error' }, 408);
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);

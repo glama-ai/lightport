@@ -1,3 +1,5 @@
+import { CONTENT_TYPES } from '../globals';
+
 /**
  * The error shape OpenAI clients understand, as a body and as a stream event.
  *
@@ -6,22 +8,46 @@
  * apart from an empty answer has been handed the one result it cannot check.
  */
 export type OpenAIError = {
-  code?: string;
+  code?: string | null;
   message: string;
+  param?: string | null;
   type: string;
 };
 
-export const openAiErrorBody = (error: OpenAIError): string => JSON.stringify({ error });
+/**
+ * `param` and `code` are written even when there is nothing to put in them,
+ * because that is the shape provider errors already leave in — see
+ * `generateErrorResponse` — and a client should not have to know which layer
+ * produced a failure to know how to read it.
+ */
+export const openAiErrorBody = (error: OpenAIError): string =>
+  JSON.stringify({
+    error: {
+      code: error.code ?? null,
+      message: error.message,
+      param: error.param ?? null,
+      // Coalesced like the rest: a provider error object is typed as always
+      // naming a type but arrives from the wire, and `undefined` would be
+      // dropped by JSON.stringify — leaving the one field a client dispatches
+      // on absent from an envelope that promises it.
+      type: error.type ?? null,
+    },
+  });
+
+export const openAiErrorResponse = (error: OpenAIError, status: number): Response =>
+  new Response(openAiErrorBody(error), {
+    status,
+    headers: { 'content-type': CONTENT_TYPES.APPLICATION_JSON },
+  });
 
 /**
- * An error delivered inside the body of a stream, for a failure that happens
- * after the status line has gone out and can no longer be expressed as one.
+ * The same error, framed as a stream event.
  *
- * What makes the OpenAI SDKs raise on this is the `error` member of the payload,
- * not the event name: openai-node reads `sse.event` only for the `thread.`
- * prefixes, so an unrecognised name lands on the branch that parses the data and
- * throws on what it finds there. The name is carried anyway for the clients that
- * do switch on it, and costs nothing to the ones that do not.
+ * Named `error` because that is what makes the OpenAI SDKs raise on it. They
+ * read `sse.event` only to recognise the `thread.` prefix, so any other name
+ * falls through to the branch that inspects the payload — which throws when it
+ * carries an `error` key. A frame the client cannot be made to raise on would
+ * leave the failure to be inferred from a completion that never arrives.
  */
 export const openAiErrorEvent = (error: OpenAIError): string =>
   `event: error\ndata: ${openAiErrorBody(error)}\n\n`;
@@ -36,6 +62,17 @@ export const openAiErrorEvent = (error: OpenAIError): string =>
  * failure as a finished answer, which is the thing being fixed one layer down.
  */
 export const readOpenAiErrorEvent = (chunk: string): OpenAIError | undefined => {
+  // Every chunk of every stream reaches this, so the cheapest disqualifying
+  // test comes first. A failure is carried under a top-level `error` key, which
+  // is spelled literally in the payload — a chunk without those seven
+  // characters cannot be one, and the ordinary content chunk that makes up
+  // almost all of this traffic leaves here having scanned once and allocated
+  // nothing. Splitting the frame apart before asking costs roughly double, on
+  // the hottest path the gateway has.
+  if (!chunk.includes('"error"')) {
+    return undefined;
+  }
+
   // trimEnd rather than trim, so a `\r` from a CRLF stream does not end up
   // inside a field value.
   const lines = chunk
@@ -46,18 +83,35 @@ export const readOpenAiErrorEvent = (chunk: string): OpenAIError | undefined => 
   // Matched whole: a prefix test would read `event: error_recovered` as fatal
   // and cut a healthy stream short. The space after the colon is optional in
   // SSE, so it cannot be part of what is matched.
-  const name = lines[0]?.startsWith('event:') ? lines[0].slice('event:'.length).trim() : undefined;
+  const first = lines[0] ?? '';
+  const named = first.startsWith('event:');
+  const name = named ? first.slice('event:'.length).trim() : undefined;
 
-  if (name !== 'error') {
+  // A frame that names an event other than `error` is not one, whatever its
+  // payload. An unnamed frame still can be: an OpenAI-compatible upstream
+  // reports a mid-stream failure as a bare `data: {"error":…}`, and most of the
+  // provider catalogue registers no stream transform to re-frame it — so
+  // requiring the `event:` line would leave those failures dropped, which is
+  // the thing being fixed.
+  if (named && name !== 'error') {
+    return undefined;
+  }
+
+  const body = named ? lines.slice(1) : lines;
+  const start = body.findIndex((line) => line.startsWith('data:'));
+
+  if (start === -1) {
     return undefined;
   }
 
   // A payload may be split across several `data:` lines, which SSE joins with
-  // newlines. Reading only the first would leave the JSON unparseable, and the
-  // error would be dropped exactly as it was before — silently.
-  const data = lines
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice('data:'.length).replace(/^ /, ''))
+  // newlines. By the time a re-framed chunk reaches the adapters the parser has
+  // already done that joining, so a continuation arrives without the prefix —
+  // taking only prefixed lines would leave the JSON unparseable and the error
+  // dropped exactly as it was before, silently.
+  const data = body
+    .slice(start)
+    .map((line) => (line.startsWith('data:') ? line.slice('data:'.length).replace(/^ /, '') : line))
     .join('\n');
 
   if (!data) {

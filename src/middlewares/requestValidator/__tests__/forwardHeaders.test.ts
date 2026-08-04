@@ -23,8 +23,12 @@ describe('forward_headers self-reference', () => {
 
     expect(response?.status).toBe(400);
     await expect(response?.json()).resolves.toMatchObject({
-      status: 'failure',
-      message: `forward_headers must not contain the '${HEADER_KEYS.FORWARD_HEADERS}' header`,
+      error: {
+        code: null,
+        message: `forward_headers must not contain the '${HEADER_KEYS.FORWARD_HEADERS}' header`,
+        param: null,
+        type: 'invalid_request_error',
+      },
     });
   });
 

@@ -72,6 +72,36 @@ describe('readOpenAiErrorEvent', () => {
     expect(readOpenAiErrorEvent(body)?.message).toBe('stopped short');
   });
 
+  it('reads a split payload in the shape the adapters actually receive', () => {
+    // The adapters re-frame an event the parser has already assembled, and the
+    // parser joins multiple `data:` lines itself — so the continuation reaches
+    // this without a prefix. Reading only prefixed lines leaves the JSON
+    // unparseable and the error dropped, which is the failure being closed.
+    const body = ['event: error', 'data: {"error":', '{"message":"stopped short"}}'].join('\n');
+
+    expect(readOpenAiErrorEvent(body)?.message).toBe('stopped short');
+  });
+
+  it('reads an error an OpenAI-compatible upstream reports without an event line', () => {
+    // Most of the provider catalogue registers no stream transform, so an
+    // upstream failure arrives exactly as the provider framed it: a bare data
+    // line. Requiring `event: error` would leave those dropped.
+    const body = 'data: {"error":{"message":"rate limited","type":"rate_limit_error"}}';
+
+    expect(readOpenAiErrorEvent(body)).toMatchObject({
+      message: 'rate limited',
+      type: 'rate_limit_error',
+    });
+  });
+
+  it('does not mistake a completion that talks about errors for one', () => {
+    // The word travels in ordinary content, and a chunk carrying it is still a
+    // chunk. Only a top-level `error` object is a failure.
+    const body = 'data: {"choices":[{"delta":{"content":"the \\"error\\" was mine"}}]}';
+
+    expect(readOpenAiErrorEvent(body)).toBeUndefined();
+  });
+
   it('reads a data line written without the optional space', () => {
     expect(readOpenAiErrorEvent('event: error\ndata:{"error":{"message":"m"}}')?.message).toBe('m');
   });

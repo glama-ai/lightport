@@ -8,6 +8,34 @@ import { RequestHandler } from '../types';
 import FireworksAIAPIConfig from './api';
 import { createDataset, getUploadEndpoint, validateDataset } from './utils';
 
+/**
+ * An upload step that failed, told to the caller without the detail of why.
+ *
+ * `reason` carried whatever the step had to hand — an upstream body, or a
+ * runtime message naming the host it could not reach — straight onto the wire.
+ * The message here is the gateway's own; the reason goes to the log, which is
+ * the same split every other error in the gateway is answered under.
+ */
+const uploadFailed = (message: string, reason: unknown, context: Record<string, unknown> = {}) => {
+  logger.error({ ...context, reason }, message);
+
+  return new Response(
+    JSON.stringify({
+      error: {
+        code: 400,
+        message,
+        provider: FIREWORKS_AI,
+      },
+    }),
+    {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    },
+  );
+};
+
 export const FireworkFileUploadRequestHandler: RequestHandler<ReadableStream> = async ({
   requestURL,
   requestBody,
@@ -44,22 +72,7 @@ export const FireworkFileUploadRequestHandler: RequestHandler<ReadableStream> = 
   });
 
   if (!created || createError) {
-    const errorResponse = {
-      error: {
-        code: 400,
-        message: 'Failed to create dataset',
-        provider: FIREWORKS_AI,
-        details: {
-          reason: createError || 'Failed to create dataset',
-        },
-      },
-    };
-    return new Response(JSON.stringify(errorResponse), {
-      status: 400,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    return uploadFailed('Failed to create dataset', createError, { datasetId });
   }
 
   const { endpoint: preSignedUrl, error } = await getUploadEndpoint({
@@ -70,22 +83,7 @@ export const FireworkFileUploadRequestHandler: RequestHandler<ReadableStream> = 
   });
 
   if (error || !preSignedUrl) {
-    const errorResponse = {
-      error: {
-        code: 400,
-        message: 'Failed to get upload endpoint',
-        provider: FIREWORKS_AI,
-        details: {
-          reason: error || 'Failed to get upload endpoint',
-        },
-      },
-    };
-    return new Response(JSON.stringify(errorResponse), {
-      status: 400,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    return uploadFailed('Failed to get upload endpoint', error, { datasetId });
   }
 
   let length = 0;
@@ -129,26 +127,9 @@ export const FireworkFileUploadRequestHandler: RequestHandler<ReadableStream> = 
     logger.info({ contentLength, length }, 'file length from request - actual file length');
 
     if (!uploadResponse.ok) {
-      const errorText = await uploadResponse.text();
-      const errorResponse = {
-        error: {
-          code: 400,
-          message: 'Unable to upload file',
-          provider: FIREWORKS_AI,
-          details: {
-            reason: errorText,
-            body: JSON.stringify({
-              contentLength,
-              datasetId,
-            }),
-          },
-        },
-      };
-      return new Response(JSON.stringify(errorResponse), {
-        status: 400,
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      return uploadFailed('Unable to upload file', await uploadResponse.text(), {
+        contentLength,
+        datasetId,
       });
     }
 
@@ -159,22 +140,7 @@ export const FireworkFileUploadRequestHandler: RequestHandler<ReadableStream> = 
     });
 
     if (!valid || error) {
-      const errorResponse = {
-        error: {
-          code: 400,
-          message: 'Failed to validate dataset',
-          provider: FIREWORKS_AI,
-          details: {
-            reason: error || 'Failed to validate dataset',
-          },
-        },
-      };
-      return new Response(JSON.stringify(errorResponse), {
-        status: 400,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
+      return uploadFailed('Failed to validate dataset', error, { datasetId });
     }
 
     const fileResponse = {
@@ -193,6 +159,9 @@ export const FireworkFileUploadRequestHandler: RequestHandler<ReadableStream> = 
       },
     });
   } catch (error) {
-    throw new GatewayError((error as Error).message || 'Failed to upload file to firework-ai');
+    // The caught error is whatever fetch or the runtime raised, and it may name
+    // an upstream host or a path. A GatewayError message is answered to the
+    // caller verbatim, so the cause is carried for the log instead of the wire.
+    throw new GatewayError('Failed to upload file to fireworks-ai', 500, error as Error);
   }
 };

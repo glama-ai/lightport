@@ -1,3 +1,4 @@
+import { gatewayErrorResponse } from '../errors/gatewayErrorResponse';
 import { logger } from '../logger';
 import { endpointStrings } from '../providers/types';
 import { captureException } from '../sentry/captureException';
@@ -30,12 +31,7 @@ function modelResponsesHandler(endpoint: endpointStrings, method: 'POST' | 'GET'
         message: `${endpoint} handler error`,
       });
 
-      return new Response(
-        JSON.stringify({
-          error: { message: 'Internal error', type: 'server_error' },
-        }),
-        { status: 500, headers: { 'content-type': 'application/json' } },
-      );
+      return gatewayErrorResponse(err);
     }
   }
   return handler;

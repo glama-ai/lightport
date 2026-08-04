@@ -1,3 +1,4 @@
+import { GatewayError } from '../../errors/GatewayError';
 import type { GatewayContext } from '../../types/GatewayContext';
 import { parseJson } from '../../utils/parseJson';
 import { CONTENT_TYPES } from '../../globals';
@@ -23,8 +24,13 @@ export const parseBody = async (request: FastifyRequest, c: GatewayContext) => {
     if (request.method !== 'GET' && request.method !== 'DELETE' && rawBody?.length) {
       try {
         bodyJSON = parseJson(rawBody.toString());
-      } catch {
-        bodyJSON = {};
+      } catch (cause) {
+        // Substituting `{}` sent the request upstream with an empty body and
+        // returned whatever the provider made of that — so a body the caller
+        // mistyped came back as an authentication failure, or as a completion
+        // of nothing. A request that cannot be read is the caller's to fix and
+        // is answered as such.
+        throw new GatewayError('Request body is not valid JSON', 400, cause as Error);
       }
     }
   } else if (contentType === CONTENT_TYPES.MULTIPART_FORM_DATA) {
@@ -34,7 +40,17 @@ export const parseBody = async (request: FastifyRequest, c: GatewayContext) => {
       headers: headersObj,
       body: rawBody ? new Uint8Array(rawBody) : undefined,
     });
-    bodyFormData = await webRequest.formData();
+
+    try {
+      bodyFormData = await webRequest.formData();
+    } catch (cause) {
+      // Thrown as a bare TypeError, which carries no status: it escaped every
+      // handler's catch to Fastify's own, where it became a 500 that told an
+      // OpenAI client to retry a body no attempt could parse — and paged
+      // someone once per attempt.
+      throw new GatewayError('Request body is not valid multipart form data', 400, cause as Error);
+    }
+
     bodyFormData.forEach((value, key) => {
       bodyJSON[key] = value;
     });

@@ -6,7 +6,8 @@
 
 import { version } from '../package.json';
 import { getClientAbortSignal, runWithClientAbort } from './context/clientAbort';
-import { openAiErrorEventAfterPartialFrame } from './errors/openAiError';
+import { gatewayErrorResponse } from './errors/gatewayErrorResponse';
+import { openAiErrorBody, openAiErrorEventAfterPartialFrame } from './errors/openAiError';
 import { CONTENT_TYPES, HEADER_KEYS } from './globals';
 import { chatCompletionsHandler } from './handlers/chatCompletionsHandler';
 import { completionsHandler } from './handlers/completionsHandler';
@@ -506,22 +507,48 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
 
   // 404
   app.setNotFoundHandler((_request, reply) => {
-    reply.status(404).send({ message: 'Not Found', ok: false });
+    // Every OpenAI endpoint the gateway does not route arrives here —
+    // embeddings, models, moderations, files — as does any wrong method on one
+    // it does. Answered in the gateway's own shape they were unreadable to the
+    // client that asked, which is the one thing this gateway exists not to be.
+    reply
+      .status(404)
+      .header('content-type', CONTENT_TYPES.APPLICATION_JSON)
+      .send(
+        openAiErrorBody({
+          code: 'unknown_url',
+          message: 'Unknown endpoint',
+          type: 'invalid_request_error',
+        }),
+      );
   });
 
   // Error handler
-  app.setErrorHandler((err, _request, reply) => {
+  app.setErrorHandler(async (err, _request, reply) => {
     logger.error({ err }, 'something went wrong');
 
-    captureException({
-      error: err,
-      message: 'unhandled route error',
-    });
+    // Fastify catches everything thrown ahead of a handler's own catch — a body
+    // that will not parse, above all — and answered all of it with a 500 in the
+    // gateway's own shape. That told an OpenAI client to retry, three times
+    // with backoff, a request no attempt could satisfy, in an envelope the
+    // client then discarded. The same decision as everywhere else is made here,
+    // in the one place that makes it.
+    const response = gatewayErrorResponse(err);
 
-    reply.status(500).send({
-      status: 'failure',
-      message: 'Internal Server Error',
-    });
+    // Only a fault is worth waking someone for. A malformed body is the
+    // caller's mistake, and capturing it once per retry turns one bad client
+    // into an alert storm.
+    if (response.status >= 500) {
+      captureException({
+        error: err,
+        message: 'unhandled route error',
+      });
+    }
+
+    reply
+      .status(response.status)
+      .header('content-type', CONTENT_TYPES.APPLICATION_JSON)
+      .send(await response.text());
   });
 
   return app;
