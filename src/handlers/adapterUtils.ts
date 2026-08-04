@@ -10,6 +10,7 @@
 
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 
+import { openAiErrorResponse } from '../errors/openAiError';
 import {
   transformMessagesToChatCompletions,
   transformChatCompletionsToMessages,
@@ -26,9 +27,9 @@ import {
 } from '../adapters/responses';
 import { logger } from '../logger';
 import { endpointStrings } from '../providers/types';
-import { captureException } from '../sentry/captureException';
 import type { GatewayContext } from '../types/GatewayContext';
 import { Params } from '../types/requestBody';
+import { pipeToWriter } from './streamHandler';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -112,14 +113,12 @@ export function applyAdapterRequestTransform(
     provider &&
     !supportsResponsesApiNatively(provider)
   ) {
-    return new Response(
-      JSON.stringify({
-        error: {
-          message: `${method} /v1/responses is only supported for native Responses API providers`,
-          type: 'invalid_request_error',
-        },
-      }),
-      { status: 400, headers: { 'content-type': 'application/json' } },
+    return openAiErrorResponse(
+      {
+        message: `${method} /v1/responses is only supported for native Responses API providers`,
+        type: 'invalid_request_error',
+      },
+      400,
     );
   }
 
@@ -171,12 +170,7 @@ async function adaptNonStreamingResponse(
       },
       'Adapter response JSON parse failed, returning original response',
     );
-    return new Response(
-      JSON.stringify({
-        error: { message: 'Internal error', type: 'server_error' },
-      }),
-      { status: 500, headers: { 'content-type': 'application/json' } },
-    );
+    return openAiErrorResponse({ message: 'Internal error', type: 'server_error' }, 500);
   }
 
   let transformedJson: any;
@@ -238,43 +232,44 @@ function adaptStreamingResponse(
   if (originalFn === 'messages') {
     const state = messagesCreateStreamState();
 
-    (async () => {
-      try {
+    // Closing the writer from a `finally` ended a failed stream exactly as it
+    // ended a finished one: the readable side stops normally, sendWebResponse
+    // sees no error and writes the terminating chunk, and an adapted caller is
+    // handed a well-formed response for a completion that stopped halfway.
+    // Aborting is what carries the failure to the one place still able to say
+    // so. The completion flush stays where it was, inside the success path.
+    pipeToWriter(
+      async () => {
         for await (const chunk of readSSEStream(reader)) {
           const transformed = messagesTransformStreamChunk(chunk, state);
           if (transformed) {
             await writer.write(encoder.encode(transformed));
           }
         }
+
         // Flush completion events for providers whose streams end without
         // a `data: [DONE]` message (e.g. Google/Gemini).
         const finalEvents = messagesTransformStreamChunk('data: [DONE]', state);
         if (finalEvents) {
           await writer.write(encoder.encode(finalEvents));
         }
-      } catch (err) {
-        logger.error({ err }, 'adapter stream transform error');
-
-        captureException({
-          error: err,
-          message: 'adapter stream transform error',
-        });
-      } finally {
-        writer.close();
-      }
-    })();
+      },
+      writer,
+      'adapter stream transform error',
+    );
   } else {
     // Responses API adapter
     const state = responsesCreateStreamState();
 
-    (async () => {
-      try {
+    pipeToWriter(
+      async () => {
         for await (const chunk of readSSEStream(reader)) {
           const transformed = responsesTransformStreamChunk(chunk, state);
           if (transformed) {
             await writer.write(encoder.encode(transformed));
           }
         }
+
         // Flush completion events for providers whose streams end without
         // a `data: [DONE]` message (e.g. Google/Gemini). The idempotency
         // guard in transformStreamChunk ensures this is a no-op when
@@ -283,17 +278,10 @@ function adaptStreamingResponse(
         if (finalEvents) {
           await writer.write(encoder.encode(finalEvents));
         }
-      } catch (err) {
-        logger.error({ err }, 'adapter stream transform error');
-
-        captureException({
-          error: err,
-          message: 'adapter stream transform error',
-        });
-      } finally {
-        writer.close();
-      }
-    })();
+      },
+      writer,
+      'adapter stream transform error',
+    );
   }
 
   // Carry forward upstream headers (trace-id, cache-status, provider, etc.)
@@ -348,8 +336,6 @@ async function* readSSEStream(
     const { done, value: event } = await eventReader.read();
     if (done) break;
 
-    yield event.event
-      ? `event: ${event.event}\ndata: ${event.data}`
-      : `data: ${event.data}`;
+    yield event.event ? `event: ${event.event}\ndata: ${event.data}` : `data: ${event.data}`;
   }
 }

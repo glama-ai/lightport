@@ -23,9 +23,18 @@ import { getStreamModeSplitPattern, type SplitPatternType } from '../utils';
 import { parseJson } from '../utils/parseJson';
 import { setTimeout as delay } from 'node:timers/promises';
 
-function pipeToWriter(
+/**
+ * Runs a transform into a writer, and ends the writer according to how it went.
+ *
+ * Shared with the adapters, which used to close the writer in a `finally` and so
+ * ended a failed stream exactly as they ended a finished one.
+ */
+export function pipeToWriter(
   fn: () => Promise<void>,
   writer: WritableStreamDefaultWriter<Uint8Array>,
+  // The logger carries no request-scoped bindings, so the message is all a log
+  // line has to say which transform failed. Sentry has the `adapted` tag.
+  description: string = 'stream transform error',
 ): void {
   fn().then(
     async () => {
@@ -41,14 +50,14 @@ function pipeToWriter(
       const causedByHangup = err === undefined || err?.name === 'AbortError';
 
       if (!causedByHangup) {
-        logger.error({ err }, 'stream transform error');
+        logger.error({ err }, description);
 
         // sendWebResponse reports any truncation that reaches a live caller, and
         // it sees this error too — via the abort below. But once the caller has
         // gone its loop has already stopped reading, so a genuine fault raised
         // after that point would go unseen anywhere else.
         if (getClientAbortSignal()?.aborted) {
-          captureException({ error: err, message: 'stream transform error' });
+          captureException({ error: err, message: description });
         }
       }
 
