@@ -6,7 +6,8 @@
 
 import { version } from '../package.json';
 import { getClientAbortSignal, runWithClientAbort } from './context/clientAbort';
-import { HEADER_KEYS } from './globals';
+import { openAiErrorEventAfterPartialFrame } from './errors/openAiError';
+import { CONTENT_TYPES, HEADER_KEYS } from './globals';
 import { chatCompletionsHandler } from './handlers/chatCompletionsHandler';
 import { completionsHandler } from './handlers/completionsHandler';
 import modelResponsesHandler from './handlers/modelResponsesHandler';
@@ -33,10 +34,108 @@ import { getCORSValues } from './utils';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { FastifyRequest, FastifyReply, FastifyHttpsOptions } from 'fastify';
+import type { ServerResponse } from 'node:http';
 
 type AppLifecycle = {
   getStatus?: () => 'running' | 'terminating';
+};
+
+/**
+ * What a caller reading a stream is told when it stops short.
+ *
+ * Neutral about cause on purpose. Every exception out of the pump ends here,
+ * a fault in the gateway's own transform as much as a provider that stopped
+ * sending, and the caller is in no position to tell those apart — the log and
+ * the Sentry event, which can, are where the distinction is drawn.
+ */
+const TRUNCATION_NOTICE = {
+  code: 'stream_truncated',
+  message: 'The response stream ended before it was complete.',
+  type: 'server_error',
+};
+
+/**
+ * The same notice in the vocabulary of the API the caller asked for.
+ *
+ * Both routes serve `text/event-stream`, but the Responses API frames an error
+ * flat and names the event in the payload rather than wrapping it in `error`.
+ * Sent the chat-completions envelope, a client dispatching on `type` finds no
+ * `type` field at all and passes over the one frame that explains the stream it
+ * is about to lose.
+ *
+ * Neither carries a terminal lifecycle event. `response.failed` has to name the
+ * response it ends and take the next sequence number, and both live in adapter
+ * state this layer never sees; inventing them would put a second, contradictory
+ * ending on the stream. The error frame is what the OpenAI SDKs raise on, so a
+ * caller is not left waiting either way.
+ */
+const TRUNCATED_STREAM_EVENTS = {
+  chat: openAiErrorEventAfterPartialFrame(TRUNCATION_NOTICE),
+  responses: `\n\nevent: error\ndata: ${JSON.stringify({
+    code: TRUNCATION_NOTICE.code,
+    message: TRUNCATION_NOTICE.message,
+    param: null,
+    type: 'error',
+  })}\n\n`,
+};
+
+/** Which of the two a route speaks. */
+const truncationEventFor = (route: string | undefined): string =>
+  route?.startsWith('/v1/responses')
+    ? TRUNCATED_STREAM_EVENTS.responses
+    : TRUNCATED_STREAM_EVENTS.chat;
+
+/**
+ * How long the truncation notice is given to reach the caller.
+ *
+ * Only a caller that has stopped reading can hold the write open, and one that
+ * has stopped reading is not going to see the notice however long it is given.
+ */
+const TRUNCATION_FLUSH_TIMEOUT = 1_000;
+
+/**
+ * Tells a caller in the body that the stream they are reading stopped short.
+ *
+ * `destroy()` follows immediately and discards whatever is still buffered, so
+ * this waits for the frame to reach the socket rather than firing it off — a
+ * notice thrown away with the connection would leave the caller back where it
+ * started, inferring truncation from a transport error that any intermediary
+ * between here and it is free to swallow.
+ *
+ * Handing the bytes to the kernel is as far as this can get: delivery to the
+ * peer is not something TCP will confirm, and a reset can still discard what
+ * was written. Best effort, and the hangup remains the signal for whoever
+ * reads no frame at all.
+ */
+const announceTruncation = async (raw: ServerResponse, event: string): Promise<void> => {
+  // The loser of the race is cancelled rather than left pending: during the
+  // outage this exists for, truncations arrive by the hundred, and each one
+  // would otherwise hold a timer for a second after it was answered.
+  const flushed = new AbortController();
+  const timeout = delay(TRUNCATION_FLUSH_TIMEOUT, undefined, {
+    ref: false,
+    signal: flushed.signal,
+  });
+
+  // Cancelling the timer rejects it. By then the race is decided and nobody is
+  // waiting, so the rejection is answered here rather than left to surface as
+  // an unhandled one on every truncation that flushed in time.
+  timeout.catch(() => {});
+
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        // The callback runs on failure as well as on flush, and a write that
+        // failed is one there is nothing left to wait for.
+        raw.write(event, () => resolve());
+      }),
+      timeout,
+    ]);
+  } finally {
+    flushed.abort();
+  }
 };
 
 const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}) => {
@@ -88,7 +187,7 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
     };
   };
 
-  const sendWebResponse = async (reply: FastifyReply, response: Response) => {
+  const sendWebResponse = async (reply: FastifyReply, response: Response, route?: string) => {
     reply.hijack();
 
     const raw = reply.raw;
@@ -167,10 +266,44 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
         // The caller is already gone; there is nobody left to signal.
       } else if (truncated) {
         // The status line and headers went out long before the failure, so they
-        // cannot be revised. Hanging up without writing the terminating chunk is
-        // the only remaining way to tell the caller their body is incomplete —
-        // end() here would frame a half-finished completion as a whole one, and
-        // no caller could tell the difference.
+        // cannot be revised, and the body is the only channel left. A stream can
+        // say it there in its own vocabulary, and being part of the payload the
+        // notice reaches whoever forwards these bytes on — which is precisely
+        // where the hangup below stops being legible, a proxy that has buffered
+        // a body being free to end it cleanly and usually doing so. Anything
+        // else the gateway streams — audio, an image, a body it never framed —
+        // has no such vocabulary, and appending to it would corrupt the very
+        // thing the caller is trying to salvage.
+        //
+        // Media types are case-insensitive and this one is the provider's, not
+        // ours: streamHandler forwards it verbatim.
+        const isEventStream = headers['content-type']
+          ?.toLowerCase()
+          .startsWith(CONTENT_TYPES.EVENT_STREAM);
+
+        // The socket, not the response: `_writeRaw` drops the write callback
+        // when the socket is gone, and the socket is marked synchronously while
+        // the response only follows on the next tick. Between the two, waiting
+        // on a flush that will never be reported costs the whole timeout to
+        // learn what is already knowable — and there is nobody there to read it.
+        if (isEventStream && !raw.socket?.destroyed) {
+          // The hangup below is the signal that must not be lost. Were the
+          // announcement to throw, the socket would be left open carrying
+          // neither a terminating chunk nor a close, and the caller would wait
+          // out a server timeout to learn nothing — strictly worse than the
+          // silence this whole change is replacing.
+          try {
+            await announceTruncation(raw, truncationEventFor(route));
+          } catch {
+            // Nothing to add: the notice was best effort and the hangup says
+            // it too.
+          }
+        }
+
+        // Hanging up without writing the terminating chunk is what tells a
+        // caller that reads neither frame. end() here would frame a
+        // half-finished completion as a whole one, and no caller could tell the
+        // difference.
         raw.destroy();
       } else {
         raw.end();
@@ -284,12 +417,12 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
       recordStage('validate', performance.now() - validationStartedAt);
 
       if (validationResponse instanceof Response) {
-        await sendWebResponse(reply, validationResponse);
+        await sendWebResponse(reply, validationResponse, request.routeOptions.url);
         return;
       }
 
       const response = await handler(c);
-      await sendWebResponse(reply, response);
+      await sendWebResponse(reply, response, request.routeOptions.url);
     });
   };
 

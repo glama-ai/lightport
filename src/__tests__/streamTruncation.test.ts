@@ -100,6 +100,53 @@ const drain = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
   }
 };
 
+/**
+ * Finds a well-formed `error` event in an SSE body.
+ *
+ * Searching for the text would also match it merged into a half-written frame
+ * ahead of it, which is the one shape a caller cannot act on. What has to hold
+ * is that the notice arrives as an event in its own right, so this parses the
+ * body the way a client does and returns only what a client would recover.
+ */
+const findErrorEvent = (body: string): Record<string, any> | undefined => {
+  for (const block of body.split('\n\n')) {
+    const lines = block.split('\n').filter((line) => line !== '');
+
+    if (!lines.includes('event: error')) {
+      continue;
+    }
+
+    const data = lines.find((line) => line.startsWith('data: '));
+
+    if (data) {
+      return JSON.parse(data.slice('data: '.length));
+    }
+  }
+
+  return undefined;
+};
+
+/**
+ * Drains a reader keeping what arrived, and reports how it ended rather than
+ * throwing — what a caller was left holding is the thing under test here.
+ */
+const collect = async (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<{ body: string; failed: boolean }> => {
+  const decoder = new TextDecoder();
+  let body = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return { body, failed: false };
+      body += decoder.decode(value, { stream: true });
+    }
+  } catch {
+    return { body, failed: true };
+  }
+};
+
 const callGateway = async (providerPort: number) => {
   const gatewayPort = await getPort();
   const app = createApp();
@@ -146,6 +193,30 @@ describe('upstream stream truncation', () => {
     await expect(drain(reader)).rejects.toThrow();
   }, 20_000);
 
+  it('names the truncation in the body, the one channel it has left', async () => {
+    const provider = await startProvider();
+    const response = await callGateway(provider.port);
+    const reader = response.body!.getReader();
+
+    await reader.read();
+    provider.truncate();
+
+    const { body, failed } = await collect(reader);
+
+    expect(failed).toBe(true);
+
+    // The hangup asserted above stops being legible at the first intermediary
+    // that buffers this body and serves it on, and one that has buffered a body
+    // ends it cleanly — which is how a truncated stream becomes an empty
+    // completion somebody trusts. This is the part of the signal that travels
+    // with the payload instead, and it has to arrive parseable, not merely
+    // present.
+    expect(findErrorEvent(body)?.error).toMatchObject({
+      code: 'stream_truncated',
+      type: 'server_error',
+    });
+  }, 20_000);
+
   it('reports a truncation the caller was made to suffer', async () => {
     const provider = await startProvider();
     const response = await callGateway(provider.port);
@@ -180,8 +251,11 @@ describe('upstream stream truncation', () => {
     provider.finish();
 
     // The guard against overcorrecting: a healthy stream must still terminate
-    // normally and report nothing.
-    await expect(drain(reader)).resolves.toBeUndefined();
+    // normally, report nothing, and carry no error frame.
+    const { body, failed } = await collect(reader);
+
+    expect(failed).toBe(false);
+    expect(findErrorEvent(body)).toBeUndefined();
 
     await Sentry.flush(2_000);
 
