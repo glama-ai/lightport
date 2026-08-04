@@ -10,7 +10,7 @@
 
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 
-import { openAiErrorResponse } from '../errors/openAiError';
+import { openAiErrorEvent, openAiErrorResponse } from '../errors/openAiError';
 import {
   transformMessagesToChatCompletions,
   transformChatCompletionsToMessages,
@@ -30,6 +30,17 @@ import { endpointStrings } from '../providers/types';
 import type { GatewayContext } from '../types/GatewayContext';
 import { Params } from '../types/requestBody';
 import { pipeToWriter } from './streamHandler';
+import { TRUNCATION_NOTICE, setTruncationNotice } from './truncationNotice';
+
+/**
+ * The truncation, in the shape the transforms read a failure in.
+ *
+ * `adaptStreamingResponse` re-frames what the parser hands it as
+ * `event: <name>\ndata: <payload>`, with the terminating blank line already
+ * consumed — so the notice is trimmed to match. Fed in like any upstream error,
+ * it comes back out in the adapted API's own vocabulary.
+ */
+const TRUNCATION_FRAME = openAiErrorEvent(TRUNCATION_NOTICE).trim();
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -229,8 +240,24 @@ function adaptStreamingResponse(
   const reader = responseToProcess.body!.getReader();
   const encoder = new TextEncoder();
 
+  // How this stream reports being cut short, should it be. The failure is fed
+  // through the same transform an upstream error takes, so a truncation reads
+  // exactly as any other failure does — sequenced with the events already sent,
+  // naming the response it ends, and closing the lifecycle the caller has been
+  // following. Only the state captured here can say any of that.
+  let buildTruncationNotice: () => string | undefined;
+
+  // Everything written to the socket on this path is a whole frame, and writes
+  // keep their order, so the notice cannot land on a half-finished `data:` line
+  // and merge into it. The separator costs nothing either way — an empty SSE
+  // block dispatches no event — and it means the guarantee is held by the bytes
+  // rather than by that argument remaining true.
+  const separated = (frame: string | undefined) => (frame ? `\n\n${frame}` : undefined);
+
   if (originalFn === 'messages') {
     const state = messagesCreateStreamState();
+
+    buildTruncationNotice = () => separated(messagesTransformStreamChunk(TRUNCATION_FRAME, state));
 
     // Closing the writer from a `finally` ended a failed stream exactly as it
     // ended a finished one: the readable side stops normally, sendWebResponse
@@ -260,6 +287,8 @@ function adaptStreamingResponse(
   } else {
     // Responses API adapter
     const state = responsesCreateStreamState();
+
+    buildTruncationNotice = () => separated(responsesTransformStreamChunk(TRUNCATION_FRAME, state));
 
     pipeToWriter(
       async () => {
@@ -296,6 +325,10 @@ function adaptStreamingResponse(
     status: 200,
     headers,
   });
+
+  // Left for the send layer, which is where a truncation is noticed and where
+  // nothing is known about the vocabulary these bytes are written in.
+  setTruncationNotice(adaptedResponse, buildTruncationNotice);
 
   // Synchronously update requestOptions so the logging middleware
   // reads the adapted stream (not the pre-adapter Chat Completions stream).

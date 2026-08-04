@@ -12,6 +12,7 @@ import { CONTENT_TYPES, HEADER_KEYS } from './globals';
 import { chatCompletionsHandler } from './handlers/chatCompletionsHandler';
 import { completionsHandler } from './handlers/completionsHandler';
 import modelResponsesHandler from './handlers/modelResponsesHandler';
+import { TRUNCATION_NOTICE, getTruncationNotice } from './handlers/truncationNotice';
 import { logger } from './logger';
 import { parseBody } from './middlewares/lightport';
 import { requestValidator } from './middlewares/requestValidator';
@@ -44,21 +45,7 @@ type AppLifecycle = {
 };
 
 /**
- * What a caller reading a stream is told when it stops short.
- *
- * Neutral about cause on purpose. Every exception out of the pump ends here,
- * a fault in the gateway's own transform as much as a provider that stopped
- * sending, and the caller is in no position to tell those apart — the log and
- * the Sentry event, which can, are where the distinction is drawn.
- */
-const TRUNCATION_NOTICE = {
-  code: 'stream_truncated',
-  message: 'The response stream ended before it was complete.',
-  type: 'server_error',
-};
-
-/**
- * The same notice in the vocabulary of the API the caller asked for.
+ * The truncation notice for a stream nobody left one for.
  *
  * Both routes serve `text/event-stream`, but the Responses API frames an error
  * flat and names the event in the payload rather than wrapping it in `error`.
@@ -66,11 +53,12 @@ const TRUNCATION_NOTICE = {
  * `type` field at all and passes over the one frame that explains the stream it
  * is about to lose.
  *
- * Neither carries a terminal lifecycle event. `response.failed` has to name the
- * response it ends and take the next sequence number, and both live in adapter
- * state this layer never sees; inventing them would put a second, contradictory
- * ending on the stream. The error frame is what the OpenAI SDKs raise on, so a
- * caller is not left waiting either way.
+ * This is what the route alone can say. It carries no terminal lifecycle event,
+ * because `response.failed` has to name the response it ends and take the next
+ * sequence number — neither of which is knowable here. A stream that came
+ * through an adapter leaves behind a notice that does know, and it is preferred
+ * over this; see `truncationNotice`. What is left on this path is the native
+ * Responses providers, whose sequence is the provider's own to number.
  */
 const TRUNCATED_STREAM_EVENTS = {
   chat: openAiErrorEventAfterPartialFrame(TRUNCATION_NOTICE),
@@ -87,6 +75,21 @@ const truncationEventFor = (route: string | undefined): string =>
   route?.startsWith('/v1/responses')
     ? TRUNCATED_STREAM_EVENTS.responses
     : TRUNCATED_STREAM_EVENTS.chat;
+
+/**
+ * What to write into a body that stopped short, if anything.
+ *
+ * A stream that came through an adapter answers for itself, in its own
+ * vocabulary and sequence. It may also decline: an upstream that already
+ * reported a failure has been given an ending, and a second one behind it would
+ * contradict the first. Only a stream that left no notice falls back to what
+ * the route implies.
+ */
+const truncationNoticeFor = (response: Response, route: string | undefined): string | undefined => {
+  const build = getTruncationNotice(response);
+
+  return build ? build() : truncationEventFor(route);
+};
 
 /**
  * How long the truncation notice is given to reach the caller.
@@ -335,16 +338,30 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
       // on a flush that will never be reported costs the whole timeout to
       // learn what is already knowable — and there is nobody there to read it.
       if (isEventStream && !raw.socket?.destroyed) {
-        // The hangup below is the signal that must not be lost. Were the
-        // announcement to throw, the socket would be left open carrying
-        // neither a terminating chunk nor a close, and the caller would wait
-        // out a server timeout to learn nothing — strictly worse than the
-        // silence this whole change is replacing.
+        // The hangup below is the signal that must not be lost. Were anything
+        // in here to throw, the socket would be left open carrying neither a
+        // terminating chunk nor a close, and the caller would wait out a
+        // server timeout to learn nothing — strictly worse than the silence
+        // this whole change is replacing.
+        //
+        // Composing the notice is inside the guard as well as inside the try.
+        // It is not the constant it looks like: on an adapted stream it runs a
+        // transform over everything accumulated so far, which can fail — and
+        // which spends sequence numbers and marks the response finished, so it
+        // is not work to do on behalf of a caller who has already gone.
         try {
-          await announceTruncation(raw, truncationEventFor(route));
-        } catch {
-          // Nothing to add: the notice was best effort and the hangup says
-          // it too.
+          const notice = truncationNoticeFor(response, route);
+
+          if (notice) {
+            await announceTruncation(raw, notice);
+          }
+        } catch (err) {
+          // Best effort by construction, and the hangup below says it too —
+          // but logged rather than swallowed, because a throw here is a fault
+          // in the gateway and nothing else will report it. The reply was
+          // hijacked long ago, so a rejection out of this function reaches
+          // Fastify with `sent` already true and is dropped without a line.
+          logger.error({ err }, 'failed to announce stream truncation');
         }
       }
 

@@ -63,6 +63,7 @@ function buildResponseSnapshot(
       output.push({
         id: state.reasoningItemId,
         type: 'reasoning',
+        status: itemStatus,
         summary: [{ type: 'summary_text', text: state.accumulatedReasoningText }],
       });
     }
