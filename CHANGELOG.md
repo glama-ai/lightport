@@ -96,3 +96,21 @@ that answered and said nothing:
   the same index. Arguments arriving before the call was named were sent for a
   block that had never been started, which comes to the same thing as losing
   them: the tool ran on an empty input.
+- Tool calling reaches DeepInfra, Lingyi, Moonshot, nCompass and Zhipu. None of
+  them named `tools`, `tool_choice` or `parallel_tool_calls` among the parameters
+  they accept, and only the named ones are forwarded, so a request carrying tools
+  had them removed before it was sent: the model was never told it could call
+  anything and answered in prose, with nothing to say the tools had gone. Their
+  responses dropped `tool_calls` for the same reason the reasoning was dropped,
+  so a model that did call one came back as though it had said nothing. 302ai is
+  configured the same way, but it is registered without being listed as a valid
+  provider, so no request reaches it at all and nothing about it changes here.
+
+  Confirmed against the published API for DeepInfra, Moonshot and Zhipu; Zhipu
+  documents only `auto` for `tool_choice`, so a caller naming a function, or
+  asking through the Responses API for `required` or `none`, is relying on
+  something Zhipu does not promise. For Lingyi and nCompass the parameters are
+  forwarded on the strength of their being OpenAI-compatible rather than a
+  documented guarantee. A provider that does not support them will either refuse
+  the request or ignore the parameters, which is what it would have done with
+  any other parameter it does not know.

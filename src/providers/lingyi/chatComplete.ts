@@ -51,6 +51,15 @@ export const LingyiChatCompleteConfig: ProviderConfig = {
     param: 'stream',
     default: false,
   },
+  tools: {
+    param: 'tools',
+  },
+  tool_choice: {
+    param: 'tool_choice',
+  },
+  parallel_tool_calls: {
+    param: 'parallel_tool_calls',
+  },
 };
 
 interface LingyiChatCompleteResponse extends ChatCompletionResponse {
@@ -82,6 +91,11 @@ interface LingyiStreamChunk {
     delta: {
       role?: string | null;
       content?: string;
+      // Forwarded whole below, so these reach the caller already. They are
+      // spelled out because the non-streaming transform rebuilds the message
+      // instead, and left them out for as long as nothing said they were here.
+      reasoning_content?: string;
+      tool_calls?: any[];
     };
     index: number;
     finish_reason: string | null;
@@ -123,6 +137,7 @@ export const LingyiChatCompleteResponseTransform: (
         message: {
           role: c.message.role,
           content: c.message.content,
+          ...(c.message.tool_calls?.length && { tool_calls: c.message.tool_calls }),
           ...transformReasoning(c.message, strictOpenAiCompliance),
         },
         finish_reason: c.finish_reason,
