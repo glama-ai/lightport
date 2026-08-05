@@ -114,3 +114,34 @@ that answered and said nothing:
   documented guarantee. A provider that does not support them will either refuse
   the request or ignore the parameters, which is what it would have done with
   any other parameter it does not know.
+
+- A request could fail on a message the caller was entitled to send. Three
+  transforms read the first element of an array without checking there was one,
+  and raised where the caller expected an answer — reaching them as a 500 saying
+  only that something had gone wrong, and recorded as a fault of the gateway
+  rather than of the request:
+
+  - A system or developer message whose content is `[]`, which an SDK assembling
+    content from nothing will send. This is in the Anthropic transform, which is
+    spread into the config for Claude on Vertex and used by Azure AI Inference,
+    so all three were affected, along with the copy that builds Bedrock batch
+    files. Empty content is now nothing said. The Bedrock copy matches only
+    `system` where the chat transform also matches `developer`; that difference
+    is untouched here, and a developer message still reaches Anthropic under a
+    role it does not accept.
+  - A tool result with no message before it to attach to — sent first, or after
+    nothing but system messages, which are removed before this runs. It now
+    stands as a message of its own, which is what a tool result already got when
+    the message before it was something else.
+  - A Reka conversation that produced no messages, either from empty content or
+    from none sent. It now takes the same placeholder opening as a conversation
+    that does not begin with a human turn.
+
+- Bedrock reported a usage object whose parts did not sum to its total. Bedrock
+  documents `inputTokens` as the non-cached input alone, the whole input being
+  `inputTokens + cacheReadInputTokens + cacheWriteInputTokens`, but does not say
+  which of those two its own `totalTokens` sums. Reporting the whole input as
+  `prompt_tokens` while passing that total through unchanged left the two
+  disagreeing whenever the cache was used. The total is now derived from the two
+  counts beside it, in the streamed response as well as the whole one, which
+  holds whichever of the two Bedrock meant.

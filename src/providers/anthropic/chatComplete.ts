@@ -298,7 +298,16 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
             } else if (msg.role === 'tool') {
               const lastMessage = messages[messages.length - 1];
 
-              if (lastMessage.role === 'user' && lastMessage.content?.[0]?.type === 'tool_result') {
+              // There may be no message to append to: a tool result arriving
+              // first, or after nothing but system messages — which are taken out
+              // above — leaves this empty, and reading the role of a message that
+              // is not there failed the request. The result becomes a message of
+              // its own instead, which is the same branch a tool result gets when
+              // the one before it was something other than a tool result.
+              if (
+                lastMessage?.role === 'user' &&
+                lastMessage.content?.[0]?.type === 'tool_result'
+              ) {
                 // @ts-expect-error TODO
                 lastMessage.content.push({
                   type: 'tool_result',
@@ -354,7 +363,11 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
               SYSTEM_MESSAGE_ROLES.includes(msg.role) &&
               msg.content &&
               typeof msg.content === 'object' &&
-              msg.content[0].text
+              // An empty array has no first element, and reading through it threw.
+              // `content` is the caller's to write, so a system message sent as
+              // `[]` — which an SDK building content up from nothing will produce
+              // — came back as a 500 saying only that something had gone wrong.
+              msg.content[0]?.text
             ) {
               msg.content.forEach((_msg) => {
                 systemMessages.push({

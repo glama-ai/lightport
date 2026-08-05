@@ -511,6 +511,17 @@ export const BedrockChatCompleteResponseTransform: (
 
     const cacheReadInputTokens = response.usage?.cacheReadInputTokens || 0;
     const cacheWriteInputTokens = response.usage?.cacheWriteInputTokens || 0;
+    // Bedrock documents `inputTokens` as the non-cached input alone, the whole
+    // input being `inputTokens + cacheReadInputTokens + cacheWriteInputTokens`.
+    // What it does not say is which of those two its own `totalTokens` sums, so
+    // reporting the whole input as `prompt_tokens` while passing that total
+    // through unchanged left the parts not summing to the total whenever the
+    // cache was used. The total is derived from the two counts beside it, which
+    // is the relationship every OpenAI-shaped consumer reads them by, and which
+    // holds whichever of the two Bedrock meant.
+    const promptTokens =
+      (response.usage.inputTokens ?? 0) + cacheReadInputTokens + cacheWriteInputTokens;
+    const completionTokens = response.usage.outputTokens ?? 0;
 
     const responseObj: ChatCompletionResponse = {
       id: Date.now().toString(),
@@ -532,9 +543,9 @@ export const BedrockChatCompleteResponseTransform: (
         },
       ],
       usage: {
-        prompt_tokens: response.usage.inputTokens + cacheReadInputTokens + cacheWriteInputTokens,
-        completion_tokens: response.usage.outputTokens,
-        total_tokens: response.usage.totalTokens, // contains the cache usage as well
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: promptTokens + completionTokens,
         prompt_tokens_details: {
           cached_tokens: cacheReadInputTokens,
         },
@@ -590,6 +601,11 @@ export const BedrockChatCompleteStreamChunkTransform: (
   if (parsedChunk.usage) {
     const cacheReadInputTokens = parsedChunk.usage?.cacheReadInputTokens || 0;
     const cacheWriteInputTokens = parsedChunk.usage?.cacheWriteInputTokens || 0;
+    // As above: the total is derived from the two counts beside it rather than
+    // taken from Bedrock, which does not count the cache into `inputTokens`.
+    const promptTokens =
+      (parsedChunk.usage.inputTokens ?? 0) + cacheReadInputTokens + cacheWriteInputTokens;
+    const completionTokens = parsedChunk.usage.outputTokens ?? 0;
 
     return [
       `data: ${JSON.stringify({
@@ -606,10 +622,9 @@ export const BedrockChatCompleteStreamChunkTransform: (
           },
         ],
         usage: {
-          prompt_tokens:
-            parsedChunk.usage.inputTokens + cacheReadInputTokens + cacheWriteInputTokens,
-          completion_tokens: parsedChunk.usage.outputTokens,
-          total_tokens: parsedChunk.usage.totalTokens,
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
           prompt_tokens_details: {
             cached_tokens: cacheReadInputTokens,
           },

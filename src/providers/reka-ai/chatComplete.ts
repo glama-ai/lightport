@@ -31,7 +31,7 @@ export const RekaAIChatCompleteConfig: ProviderConfig = {
         media_url?: string;
       }) => {
         // NOTE: can't have more than one image in conversation history
-        if (media_url && messages[0].media_url) {
+        if (media_url && messages[0]?.media_url) {
           return;
         }
 
@@ -74,7 +74,11 @@ export const RekaAIChatCompleteConfig: ProviderConfig = {
         }
       });
 
-      if (messages[0].type !== 'human') {
+      // A conversation that produced no messages at all — every message empty,
+      // or none sent — has no first one to read, and reading it failed the
+      // request. The placeholder below is what an opening that is not human gets
+      // anyway, so nothing is a case of that rather than a case of its own.
+      if (messages[0]?.type !== 'human') {
         messages.unshift({
           type: 'human',
           text: 'Placeholder for alternation',

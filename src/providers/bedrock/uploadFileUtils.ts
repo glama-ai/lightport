@@ -185,7 +185,12 @@ const BedrockAnthropicChatCompleteConfig: ProviderConfig = {
               msg.role === 'system' &&
               msg.content &&
               typeof msg.content === 'object' &&
-              msg.content[0].text
+              // As in the Anthropic transform this mirrors: an empty array has no
+              // first element, and reading through it threw. Only `system` is
+              // matched here, not `developer` as the chat transform does, so a
+              // developer message still reaches Anthropic under a role it does
+              // not accept — untouched, and separate from the crash.
+              msg.content[0]?.text
             ) {
               systemMessage = msg.content[0].text;
             } else if (msg.role === 'system' && typeof msg.content === 'string') {
