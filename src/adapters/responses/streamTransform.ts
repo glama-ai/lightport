@@ -394,52 +394,72 @@ export function transformStreamChunk(chunk: string, state: StreamState): string 
     );
   }
 
-  // Handle thinking/reasoning from content_blocks (Anthropic, Gemini via gateway transform)
-  if (delta?.content_blocks) {
+  // Thinking reaches here either as `content_blocks` (Anthropic and Gemini, via
+  // the gateway transform) or as `reasoning_content`, which is how the providers
+  // speaking OpenAI's dialect stream it and the field their non-streaming halves
+  // report it in. Only the first was read, so a streamed reasoner reached this
+  // API with its thinking missing while the same model answering without a
+  // stream did not. Where a provider sends both, `content_blocks` wins, so the
+  // reasoning is not counted twice.
+  const thinkingTexts: string[] = [];
+
+  if (Array.isArray(delta?.content_blocks)) {
     for (const block of delta.content_blocks) {
-      const thinkingText = block.delta?.thinking ?? block.thinking;
+      const thinkingText = block?.delta?.thinking ?? block?.thinking;
 
       if (typeof thinkingText === 'string' && thinkingText) {
-        if (!state.hasEmittedReasoningItem) {
-          state.hasEmittedReasoningItem = true;
-          state.reasoningItemId = `rs_${randomUUID()}`;
-
-          events.push(
-            `event: response.output_item.added\ndata: ${JSON.stringify({
-              type: 'response.output_item.added',
-              sequence_number: state.sequenceNumber++,
-              output_index: 0,
-              item: {
-                id: state.reasoningItemId,
-                type: 'reasoning',
-                summary: [],
-              },
-            })}\n\n`,
-            `event: response.reasoning_summary_part.added\ndata: ${JSON.stringify({
-              type: 'response.reasoning_summary_part.added',
-              sequence_number: state.sequenceNumber++,
-              item_id: state.reasoningItemId,
-              output_index: 0,
-              summary_index: 0,
-              part: { type: 'summary_text', text: '' },
-            })}\n\n`,
-          );
-        }
-
-        state.accumulatedReasoningText += thinkingText;
-
-        events.push(
-          `event: response.reasoning_summary_text.delta\ndata: ${JSON.stringify({
-            type: 'response.reasoning_summary_text.delta',
-            sequence_number: state.sequenceNumber++,
-            item_id: state.reasoningItemId,
-            output_index: 0,
-            summary_index: 0,
-            delta: thinkingText,
-          })}\n\n`,
-        );
+        thinkingTexts.push(thinkingText);
       }
     }
+  }
+
+  if (
+    !thinkingTexts.length &&
+    typeof delta?.reasoning_content === 'string' &&
+    delta.reasoning_content
+  ) {
+    thinkingTexts.push(delta.reasoning_content);
+  }
+
+  for (const thinkingText of thinkingTexts) {
+    if (!state.hasEmittedReasoningItem) {
+      state.hasEmittedReasoningItem = true;
+      state.reasoningItemId = `rs_${randomUUID()}`;
+
+      events.push(
+        `event: response.output_item.added\ndata: ${JSON.stringify({
+          type: 'response.output_item.added',
+          sequence_number: state.sequenceNumber++,
+          output_index: 0,
+          item: {
+            id: state.reasoningItemId,
+            type: 'reasoning',
+            summary: [],
+          },
+        })}\n\n`,
+        `event: response.reasoning_summary_part.added\ndata: ${JSON.stringify({
+          type: 'response.reasoning_summary_part.added',
+          sequence_number: state.sequenceNumber++,
+          item_id: state.reasoningItemId,
+          output_index: 0,
+          summary_index: 0,
+          part: { type: 'summary_text', text: '' },
+        })}\n\n`,
+      );
+    }
+
+    state.accumulatedReasoningText += thinkingText;
+
+    events.push(
+      `event: response.reasoning_summary_text.delta\ndata: ${JSON.stringify({
+        type: 'response.reasoning_summary_text.delta',
+        sequence_number: state.sequenceNumber++,
+        item_id: state.reasoningItemId,
+        output_index: 0,
+        summary_index: 0,
+        delta: thinkingText,
+      })}\n\n`,
+    );
   }
 
   // Handle tool calls

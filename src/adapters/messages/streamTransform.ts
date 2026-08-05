@@ -18,7 +18,63 @@ interface StreamState {
   outputTokens: number;
   contentBlockIndex: number;
   stopReason: string | null;
+  // Blocks are numbered as they are opened rather than at fixed positions. The
+  // text block used to be opened at index 0 before the model had said anything,
+  // which left nowhere for the thinking to go: Anthropic orders thinking ahead
+  // of the answer, and the non-streaming half of this adapter already does.
+  //
+  // Anthropic has one block open at a time — start, its deltas, stop, then the
+  // next — so a single index is tracked, and opening anything closes whatever
+  // was open. Blocks used to be left open while later ones were started inside
+  // them, which a caller following the current block reads as the wrong content.
+  thinkingIndex: number | null;
+  textIndex: number | null;
+  openIndex: number | null;
+  // One slot per tool-call index, which is what the chunks continuing a call
+  // carry. The id is held only to notice a different call reusing the index.
+  toolSlots: Record<number, { id?: string; blockIndex?: number; pending: string }>;
 }
+
+const contentBlockStop = (index: number) =>
+  `event: content_block_stop\ndata: ${JSON.stringify({
+    type: 'content_block_stop',
+    index,
+  })}\n\n`;
+
+// Closes the open block, if there is one, and forgets whichever index pointed at
+// it, so the next thing the model says opens a block of its own rather than
+// writing into one already stopped.
+const closeOpenBlock = (state: StreamState): string[] => {
+  const index = state.openIndex;
+
+  if (index === null) return [];
+
+  state.openIndex = null;
+  if (state.thinkingIndex === index) state.thinkingIndex = null;
+  if (state.textIndex === index) state.textIndex = null;
+
+  return [contentBlockStop(index)];
+};
+
+// The same, at the end of the stream, where nothing more will be written and
+// every index is forgotten — a provider that repeats the finish reason on each
+// chunk would otherwise carry on writing into blocks that have been closed.
+const drainOpenBlocks = (state: StreamState): string[] => {
+  const events = closeOpenBlock(state);
+
+  state.thinkingIndex = null;
+  state.textIndex = null;
+  for (const slot of Object.values(state.toolSlots)) slot.blockIndex = undefined;
+
+  return events;
+};
+
+const toolArgumentsDelta = (index: number, partialJson: string) =>
+  `event: content_block_delta\ndata: ${JSON.stringify({
+    type: 'content_block_delta',
+    index,
+    delta: { type: 'input_json_delta', partial_json: partialJson },
+  })}\n\n`;
 
 /**
  * Transform a single Chat Completions stream chunk to Messages API stream events
@@ -65,6 +121,23 @@ export function transformStreamChunk(chunk: string, state: StreamState): string 
 
     // Emit message_delta and message_stop
     return [
+      // A message that said nothing still carried an empty text block before, so
+      // one is sent rather than closing the message with no content at all — as
+      // the finish-reason path below also does.
+      ...(state.contentBlockIndex === 0
+        ? [
+            `event: content_block_start\ndata: ${JSON.stringify({
+              type: 'content_block_start',
+              index: state.contentBlockIndex++,
+              content_block: { type: 'text', text: '' },
+            })}\n\n`,
+            contentBlockStop(0),
+          ]
+        : []),
+      // A stream whose last chunk carried no finish reason ended with its blocks
+      // still open, so the caller was told the message had stopped while a block
+      // inside it never had.
+      ...drainOpenBlocks(state),
       `event: message_delta\ndata: ${JSON.stringify({
         type: 'message_delta',
         delta: {
@@ -121,25 +194,75 @@ export function transformStreamChunk(chunk: string, state: StreamState): string 
         },
       })}\n\n`,
     );
-
-    // Emit content_block_start for text
-    events.push(
-      `event: content_block_start\ndata: ${JSON.stringify({
-        type: 'content_block_start',
-        index: 0,
-        content_block: { type: 'text', text: '' },
-      })}\n\n`,
-    );
   }
 
   const delta = parsed.choices?.[0]?.delta;
 
-  // Handle content delta
-  if (delta?.content) {
+  // Opens a block at the next free index, closing whatever was open first, so a
+  // block is never opened inside another and a delta never follows its own stop.
+  // The model is free to think again after it has begun answering, or to speak
+  // between two tool calls, and simply gets another block when it does.
+  const openBlock = (contentBlock: Record<string, unknown>): number => {
+    events.push(...closeOpenBlock(state));
+
+    const index = state.contentBlockIndex++;
+    state.openIndex = index;
+    events.push(
+      `event: content_block_start\ndata: ${JSON.stringify({
+        type: 'content_block_start',
+        index,
+        content_block: contentBlock,
+      })}\n\n`,
+    );
+
+    return index;
+  };
+
+  // Thinking arrives either as `reasoning_content`, which is how the providers
+  // speaking OpenAI's dialect stream it, or as `content_blocks` from a provider
+  // whose transform already reshaped it. Neither was read here at all, so a
+  // streamed reasoner reached this API with its thinking missing while the same
+  // model answering without a stream did not. `content_blocks` wins where a
+  // provider sends both, so the reasoning is not counted twice.
+  let thinking = '';
+
+  if (Array.isArray(delta?.content_blocks)) {
+    for (const block of delta.content_blocks) {
+      const text = block?.delta?.thinking ?? block?.thinking;
+      if (typeof text === 'string' && text) thinking += text;
+    }
+  }
+
+  if (!thinking && typeof delta?.reasoning_content === 'string') {
+    thinking = delta.reasoning_content;
+  }
+
+  if (thinking) {
+    if (state.thinkingIndex === null) {
+      // `signature` is empty rather than absent, as the non-streaming half of
+      // this adapter already sends it, so the two agree on the block's shape.
+      state.thinkingIndex = openBlock({ type: 'thinking', thinking: '', signature: '' });
+    }
+
     events.push(
       `event: content_block_delta\ndata: ${JSON.stringify({
         type: 'content_block_delta',
-        index: 0,
+        index: state.thinkingIndex,
+        delta: { type: 'thinking_delta', thinking },
+      })}\n\n`,
+    );
+  }
+
+  // Handle content delta
+  if (delta?.content) {
+    if (state.textIndex === null) {
+      state.textIndex = openBlock({ type: 'text', text: '' });
+    }
+
+    events.push(
+      `event: content_block_delta\ndata: ${JSON.stringify({
+        type: 'content_block_delta',
+        index: state.textIndex,
         delta: { type: 'text_delta', text: delta.content },
       })}\n\n`,
     );
@@ -148,38 +271,46 @@ export function transformStreamChunk(chunk: string, state: StreamState): string 
   // Handle tool calls
   if (delta?.tool_calls) {
     for (const tc of delta.tool_calls) {
-      // Content block index 0 is reserved for the assistant text block.
-      // Tool calls are subsequent blocks starting at index 1.
-      const idx = (tc.index ?? 0) + 1;
+      // A call is followed by its index, which is the only thing the chunks
+      // continuing it carry. A different id at the same index is a different
+      // call, though — some providers number the calls within a chunk from
+      // zero, so a second call in a later chunk arrives as index 0 again.
+      const callIndex = tc.index ?? 0;
+      const existing = state.toolSlots[callIndex];
 
-      if (tc.function?.name) {
-        // New tool call - emit content_block_start
-        events.push(
-          `event: content_block_start\ndata: ${JSON.stringify({
-            type: 'content_block_start',
-            index: idx,
-            content_block: {
-              type: 'tool_use',
-              id: tc.id || `toolu_${randomUUID()}`,
-              name: tc.function.name,
-              input: {},
-            },
-          })}\n\n`,
-        );
+      if (!existing || (tc.id && existing.id && existing.id !== tc.id)) {
+        state.toolSlots[callIndex] = { id: tc.id, pending: '' };
+      }
+
+      const slot = state.toolSlots[callIndex];
+      if (tc.id) slot.id = tc.id;
+
+      // Opened once per call: a provider repeating the name on every chunk would
+      // otherwise get a block each time, splitting one call's arguments into
+      // several pieces of invalid JSON.
+      if (tc.function?.name && slot.blockIndex === undefined) {
+        slot.blockIndex = openBlock({
+          type: 'tool_use',
+          id: tc.id || `toolu_${randomUUID()}`,
+          name: tc.function.name,
+          input: {},
+        });
+
+        // Arguments can arrive before the call is named. They used to be
+        // dropped, so the tool ran on an empty input with nothing to say it had
+        // been given one; they are held until there is a block to put them in.
+        if (slot.pending) {
+          events.push(toolArgumentsDelta(slot.blockIndex, slot.pending));
+          slot.pending = '';
+        }
       }
 
       if (tc.function?.arguments) {
-        // Tool arguments delta
-        events.push(
-          `event: content_block_delta\ndata: ${JSON.stringify({
-            type: 'content_block_delta',
-            index: idx,
-            delta: {
-              type: 'input_json_delta',
-              partial_json: tc.function.arguments,
-            },
-          })}\n\n`,
-        );
+        if (slot.blockIndex === undefined) {
+          slot.pending += tc.function.arguments;
+        } else {
+          events.push(toolArgumentsDelta(slot.blockIndex, tc.function.arguments));
+        }
       }
     }
   }
@@ -196,13 +327,15 @@ export function transformStreamChunk(chunk: string, state: StreamState): string 
     state.stopReason =
       reason === 'tool_calls' ? 'tool_use' : reason === 'length' ? 'max_tokens' : 'end_turn';
 
-    // Emit content_block_stop for all blocks
-    events.push(
-      `event: content_block_stop\ndata: ${JSON.stringify({
-        type: 'content_block_stop',
-        index: 0,
-      })}\n\n`,
-    );
+    // A message that said nothing still carried an empty text block before, so
+    // one is opened here rather than closing the message with no content at all.
+    if (state.contentBlockIndex === 0) {
+      state.textIndex = openBlock({ type: 'text', text: '' });
+    }
+
+    // Every block that was opened, not only the first: the tool_use blocks used
+    // to be left open, and a thinking block would have been too.
+    events.push(...drainOpenBlocks(state));
   }
 
   return events.length > 0 ? events.join('') : undefined;
@@ -221,5 +354,9 @@ export function createStreamState(): StreamState {
     outputTokens: 0,
     contentBlockIndex: 0,
     stopReason: null,
+    thinkingIndex: null,
+    textIndex: null,
+    openIndex: null,
+    toolSlots: {},
   };
 }

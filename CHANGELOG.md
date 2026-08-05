@@ -77,3 +77,22 @@ that answered and said nothing:
   content alone — losing the role, the reasoning and any tool call — reported an
   empty finish reason throughout, forwarded only the first choice, and dropped
   usage entirely.
+- Streamed reasoning never reached the Messages or Responses APIs. The providers
+  stream it as `reasoning_content`, and the adapters read only the `content_blocks`
+  a handful of providers reshape it into — the Messages adapter read no reasoning
+  at all. So the reasoning a caller lost was the one on the path most callers
+  take. Both now read either form, and count it once where a provider sends both.
+- The Messages adapter opened its text block before the model had said anything
+  and numbered it zero, which left nowhere to put the thinking that precedes an
+  answer. Blocks are now numbered as they are opened, and one is closed before
+  the next opens, so the thinking comes first as it already did without a stream
+  and no block is ever opened inside another — a `tool_use` block used to be
+  started inside the text block and left open, and a second call inside the
+  first. Whatever is still open is now closed when the stream ends, whether it
+  ends by a finish reason or only by running out: on that second path nothing
+  was closed at all.
+- The Messages adapter restarted a `tool_use` block on every chunk naming the
+  call, so a provider that repeats the name emitted one call as several starts at
+  the same index. Arguments arriving before the call was named were sent for a
+  block that had never been started, which comes to the same thing as losing
+  them: the tool ran on an empty input.
