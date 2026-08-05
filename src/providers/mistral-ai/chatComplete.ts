@@ -5,6 +5,8 @@ import {
   generateErrorResponse,
   generateInvalidProviderResponseError,
   transformFinishReason,
+  transformReasoning,
+  transformUsageDetails,
 } from '../utils';
 import { MISTRAL_AI_FINISH_REASON } from './types';
 
@@ -197,6 +199,7 @@ export const GetMistralAIChatCompleteResponseTransform = (provider: string) => {
           message: {
             role: c.message.role,
             content: c.message.content,
+            ...transformReasoning(c.message, strictOpenAiCompliance),
             tool_calls: c.message.tool_calls,
           },
           finish_reason: transformFinishReason(
@@ -208,6 +211,7 @@ export const GetMistralAIChatCompleteResponseTransform = (provider: string) => {
           prompt_tokens: response.usage?.prompt_tokens,
           completion_tokens: response.usage?.completion_tokens,
           total_tokens: response.usage?.total_tokens,
+          ...transformUsageDetails(response.usage),
         },
       };
     }

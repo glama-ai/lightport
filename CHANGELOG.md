@@ -48,10 +48,32 @@ that answered and said nothing:
   ended a finished one, and dropped upstream error frames while re-framing.
 - Truncation and its cause are now recorded in the log and in Sentry, which the
   caller-facing notice deliberately does not distinguish.
-- DeepSeek's non-streaming responses dropped `reasoning_content`, so a reasoner
-  model answering without a stream came back with its thinking missing, and a
-  turn spent entirely on reasoning came back empty — indistinguishable from a
-  model that said nothing. The streaming path never lost it, which is the only
-  reason this stayed hidden. The same rebuild also dropped `logprobs`, which the
-  provider accepts as a request parameter, and the `completion_tokens_details`
-  and cache counters, so reasoning tokens were billed but never reported.
+- Non-streaming responses dropped whatever reasoning field the provider sent,
+  across twelve of them — 302ai, DeepInfra, DeepSeek, Latitude, Lingyi, Mistral,
+  Moonshot, nCompass, Novita, Perplexity, Together and Zhipu. Each rebuilt the
+  message field by field and kept only what it named, so a reasoner model
+  answering without a stream came back with its thinking missing, and a turn
+  spent entirely on reasoning came back empty — indistinguishable from a model
+  that said nothing. Most of the streaming halves forward the delta whole and
+  never lost it, which is the only reason this stayed hidden. Confirmed against
+  DeepSeek, Moonshot and Zhipu, whose reasoners document the field; for the rest
+  the field is now carried rather than dropped, whether or not they send it.
+- The same rebuilds dropped `completion_tokens_details` and the cache counters,
+  so reasoning tokens were billed but never reported — in every provider above
+  except Perplexity, which reports its counts differently, and in Predibase,
+  which never dropped the reasoning itself.
+- `logprobs` was accepted as a request parameter by DeepSeek, Novita and Together
+  and then discarded on the way back, the last two by returning a hardcoded null.
+- Predibase carried the message whole and so never lost the reasoning itself, but
+  never offered it as a content block either, which is the only form the Messages
+  and Responses adapters read. Through those a reasoner's thinking arrived as
+  nothing at all.
+- Perplexity reported an empty finish reason whatever the model did, which left
+  a truncated answer looking exactly like a complete one. It also dropped the
+  reasoning, citation and cost counts it charges for, which it reports beside
+  the three token counts rather than under a breakdown.
+- Novita numbered every answer zero, so asking for more than one returned a set
+  that all claimed to be the first. Its streaming half rebuilt each delta as
+  content alone — losing the role, the reasoning and any tool call — reported an
+  empty finish reason throughout, forwarded only the first choice, and dropped
+  usage entirely.

@@ -2,7 +2,11 @@ import { THREE_ZERO_TWO_AI } from '../../globals';
 import { parseJson } from '../../utils/parseJson';
 import { OpenAIErrorResponseTransform } from '../openai/utils';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
-import { generateInvalidProviderResponseError } from '../utils';
+import {
+  generateInvalidProviderResponseError,
+  transformReasoning,
+  transformUsageDetails,
+} from '../utils';
 
 export const AI302ChatCompleteConfig: ProviderConfig = {
   model: {
@@ -83,7 +87,14 @@ interface AI302StreamChunk {
 export const AI302ChatCompleteResponseTransform: (
   response: AI302ChatCompleteResponse | ErrorResponse,
   responseStatus: number,
-) => ChatCompletionResponse | ErrorResponse = (response, responseStatus) => {
+  responseHeaders: Headers,
+  strictOpenAiCompliance: boolean,
+) => ChatCompletionResponse | ErrorResponse = (
+  response,
+  responseStatus,
+  _responseHeaders,
+  strictOpenAiCompliance,
+) => {
   if ('error' in response && responseStatus !== 200) {
     return OpenAIErrorResponseTransform(response, THREE_ZERO_TWO_AI);
   }
@@ -100,6 +111,7 @@ export const AI302ChatCompleteResponseTransform: (
         message: {
           role: c.message.role,
           content: c.message.content,
+          ...transformReasoning(c.message, strictOpenAiCompliance),
         },
         finish_reason: c.finish_reason,
       })),
@@ -107,6 +119,7 @@ export const AI302ChatCompleteResponseTransform: (
         prompt_tokens: response.usage?.prompt_tokens || 0,
         completion_tokens: response.usage?.completion_tokens || 0,
         total_tokens: response.usage?.total_tokens || 0,
+        ...transformUsageDetails(response.usage),
       },
     };
   }

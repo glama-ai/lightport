@@ -6,6 +6,7 @@ import {
   generateErrorResponse,
   generateInvalidProviderResponseError,
   transformFinishReason,
+  transformUsageDetails,
 } from '../utils';
 import { TOGETHER_AI_FINISH_REASON } from './types';
 
@@ -79,6 +80,7 @@ interface TogetherAIMessage {
   role: string;
   content: string;
   reasoning?: string;
+  reasoning_content?: string;
   tool_calls?: {
     id: string;
     type: string;
@@ -92,6 +94,7 @@ interface TogetherAIMessage {
 interface TogetherAIChoice {
   index: number;
   message: TogetherAIMessage;
+  logprobs?: object | null;
   finish_reason: TOGETHER_AI_FINISH_REASON;
 }
 
@@ -105,6 +108,8 @@ export interface TogetherAIChatCompleteResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    completion_tokens_details?: Record<string, number>;
+    prompt_tokens_details?: { cached_tokens?: number };
   };
 }
 
@@ -129,6 +134,7 @@ export interface TogetherAIChatCompletionStreamChunk {
     delta: {
       content?: string;
       reasoning?: string;
+      reasoning_content?: string;
     };
     finish_reason: TOGETHER_AI_FINISH_REASON;
   }[];
@@ -199,12 +205,15 @@ export const TogetherAIChatCompleteResponseTransform: (
       provider: TOGETHER_AI,
       choices: response.choices.map((choice) => {
         const content_blocks = [];
+        // Together hosts models from both camps, so the thinking arrives under
+        // whichever name the model it is serving happens to use.
+        const reasoning = choice.message.reasoning_content || choice.message.reasoning;
 
         if (!strictOpenAiCompliance) {
-          if (choice.message.reasoning) {
+          if (reasoning) {
             content_blocks.push({
               type: 'thinking',
-              thinking: choice.message.reasoning,
+              thinking: reasoning,
             });
           }
 
@@ -218,6 +227,10 @@ export const TogetherAIChatCompleteResponseTransform: (
           message: {
             role: 'assistant',
             content: choice.message.content,
+            // The thinking was rebuilt into `content_blocks` above but the field
+            // it arrived in was dropped, so a caller reading the reasoning the
+            // way the model reported it found nothing there.
+            ...(reasoning && { reasoning_content: reasoning }),
             ...(content_blocks.length && { content_blocks }),
             tool_calls: choice.message.tool_calls
               ? choice.message.tool_calls.map((toolCall: any) => ({
@@ -228,7 +241,9 @@ export const TogetherAIChatCompleteResponseTransform: (
               : null,
           },
           index: choice.index,
-          logprobs: null,
+          // Was hardcoded to null while `logprobs` is accepted as a request
+          // parameter, so what was asked for was thrown away on return.
+          logprobs: choice.logprobs ?? null,
           finish_reason: transformFinishReason(choice.finish_reason, strictOpenAiCompliance),
         };
       }),
@@ -236,6 +251,7 @@ export const TogetherAIChatCompleteResponseTransform: (
         prompt_tokens: response.usage?.prompt_tokens,
         completion_tokens: response.usage?.completion_tokens,
         total_tokens: response.usage?.total_tokens,
+        ...transformUsageDetails(response.usage),
       },
     };
   }
@@ -260,14 +276,21 @@ export const TogetherAIChatCompleteStreamChunkTransform: (
     ? transformFinishReason(parsedChunk.choices[0].finish_reason, strictOpenAiCompliance)
     : null;
 
+  // Read under both names, as the non-streaming half does: the stream looked
+  // only for `reasoning`, so a Together-hosted model using the other name lost
+  // its thinking here while the other path kept it.
+  const reasoning =
+    parsedChunk.choices?.[0]?.delta?.reasoning_content ||
+    parsedChunk.choices?.[0]?.delta?.reasoning;
+
   const content_blocks = [];
   if (!strictOpenAiCompliance) {
     // Add reasoning first
-    if (parsedChunk.choices?.[0]?.delta?.reasoning) {
+    if (reasoning) {
       content_blocks.push({
         index: parsedChunk.choices?.[0]?.index,
         delta: {
-          thinking: parsedChunk.choices?.[0]?.delta?.reasoning,
+          thinking: reasoning,
         },
       });
     }
@@ -293,6 +316,10 @@ export const TogetherAIChatCompleteStreamChunkTransform: (
         {
           delta: {
             content: parsedChunk.choices[0]?.delta?.content,
+            // Forwarded so the two paths agree on what the model said: the
+            // non-streaming half reports the thinking here whatever the
+            // compliance setting, and this half reported it nowhere.
+            ...(reasoning && { reasoning_content: reasoning }),
             ...(content_blocks.length && { content_blocks }),
           },
           index: parsedChunk.choices?.[0]?.index ?? 0,

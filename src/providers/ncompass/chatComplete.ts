@@ -2,7 +2,12 @@ import { NCOMPASS } from '../../globals';
 import { Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
-import { generateErrorResponse, generateInvalidProviderResponseError } from '../utils';
+import {
+  generateErrorResponse,
+  generateInvalidProviderResponseError,
+  transformReasoning,
+  transformUsageDetails,
+} from '../utils';
 
 // TODOS: this configuration might have to check on the max value of n
 
@@ -99,7 +104,14 @@ interface NCompassStreamChunk {
 export const NCompassChatCompleteResponseTransform: (
   response: ChatCompletionResponse | NCompassErrorResponse,
   responseStatus: number,
-) => ChatCompletionResponse | ErrorResponse = (response, responseStatus) => {
+  responseHeaders: Headers,
+  strictOpenAiCompliance: boolean,
+) => ChatCompletionResponse | ErrorResponse = (
+  response,
+  responseStatus,
+  _responseHeaders,
+  strictOpenAiCompliance,
+) => {
   if ('detail' in response && responseStatus !== 200 && response.detail.length) {
     let firstError: Record<string, any> | undefined;
     let errorField: string | null = null;
@@ -138,6 +150,7 @@ export const NCompassChatCompleteResponseTransform: (
         message: {
           role: c.message.role,
           content: c.message.content,
+          ...transformReasoning(c.message, strictOpenAiCompliance),
         },
         finish_reason: c.finish_reason,
       })),
@@ -145,6 +158,7 @@ export const NCompassChatCompleteResponseTransform: (
         prompt_tokens: response.usage?.prompt_tokens ?? 0,
         completion_tokens: response.usage?.completion_tokens ?? 0,
         total_tokens: response.usage?.total_tokens ?? 0,
+        ...transformUsageDetails(response.usage),
       },
     };
   }

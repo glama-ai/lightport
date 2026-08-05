@@ -2,7 +2,12 @@ import { DEEPINFRA } from '../../globals';
 import { Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
-import { generateErrorResponse, generateInvalidProviderResponseError } from '../utils';
+import {
+  generateErrorResponse,
+  generateInvalidProviderResponseError,
+  transformReasoning,
+  transformUsageDetails,
+} from '../utils';
 
 // TODOS: this configuration does not enforce the maximum token limit for the input parameter. If you want to enforce this, you might need to add a custom validation function or a max property to the ParameterConfig interface, and then use it in the input configuration. However, this might be complex because the token count is not a simple length check, but depends on the specific tokenization method used by the model.
 // TODOS: this configuration might have to check on the max value of n
@@ -117,7 +122,14 @@ interface DeepInfraStreamChunk {
 export const DeepInfraChatCompleteResponseTransform: (
   response: DeepInfraChatCompleteResponse | DeepInfraErrorResponse,
   responseStatus: number,
-) => ChatCompletionResponse | ErrorResponse = (response, responseStatus) => {
+  responseHeaders: Headers,
+  strictOpenAiCompliance: boolean,
+) => ChatCompletionResponse | ErrorResponse = (
+  response,
+  responseStatus,
+  _responseHeaders,
+  strictOpenAiCompliance,
+) => {
   if ('detail' in response && responseStatus !== 200 && response.detail.length) {
     let firstError: Record<string, any> | undefined;
     let errorField: string | null = null;
@@ -156,6 +168,7 @@ export const DeepInfraChatCompleteResponseTransform: (
         message: {
           role: c.message.role,
           content: c.message.content,
+          ...transformReasoning(c.message, strictOpenAiCompliance),
         },
         finish_reason: c.finish_reason,
       })),
@@ -163,6 +176,7 @@ export const DeepInfraChatCompleteResponseTransform: (
         prompt_tokens: response.usage?.prompt_tokens,
         completion_tokens: response.usage?.completion_tokens,
         total_tokens: response.usage?.total_tokens,
+        ...transformUsageDetails(response.usage),
       },
     };
   }

@@ -1,8 +1,18 @@
 import { PERPLEXITY_AI } from '../../globals';
 import { Message, Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
-import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
-import { generateErrorResponse, generateInvalidProviderResponseError } from '../utils';
+import {
+  ChatCompletionResponse,
+  ErrorResponse,
+  PROVIDER_FINISH_REASON,
+  ProviderConfig,
+} from '../types';
+import {
+  generateErrorResponse,
+  generateInvalidProviderResponseError,
+  transformFinishReason,
+  transformReasoning,
+} from '../utils';
 
 // TODOS: this configuration does not enforce the maximum token limit for the input parameter. If you want to enforce this, you might need to add a custom validation function or a max property to the ParameterConfig interface, and then use it in the input configuration. However, this might be complex because the token count is not a simple length check, but depends on the specific tokenization method used by the model.
 
@@ -86,10 +96,12 @@ interface PerplexityAIChatChoice {
   message: {
     role: string;
     content: string;
+    reasoning_content?: string;
   };
   delta: {
     role: string;
     content: string;
+    reasoning_content?: string;
   };
   index: number;
   finish_reason: string | null;
@@ -107,6 +119,13 @@ export interface PerplexityAIChatCompleteResponse {
     completion_tokens: number;
     total_tokens: number;
     num_search_queries: number;
+    // Perplexity reports the searching and the reasoning it charged for beside
+    // the three token counts rather than under a breakdown, and all of it was
+    // being dropped on the way out.
+    reasoning_tokens?: number;
+    citation_tokens?: number;
+    search_context_size?: string;
+    cost?: Record<string, number>;
   };
 }
 
@@ -129,6 +148,13 @@ export interface PerplexityAIChatCompletionStreamChunk {
     completion_tokens: number;
     total_tokens: number;
     num_search_queries: number;
+    // Perplexity reports the searching and the reasoning it charged for beside
+    // the three token counts rather than under a breakdown, and all of it was
+    // being dropped on the way out.
+    reasoning_tokens?: number;
+    citation_tokens?: number;
+    search_context_size?: string;
+    cost?: Record<string, number>;
   };
   choices: PerplexityAIChatChoice[];
 }
@@ -166,22 +192,38 @@ export const PerplexityAIChatCompleteResponseTransform: (
       ...(!strictOpenAiCompliance && {
         citations: response.citations,
       }),
-      choices: [
-        {
-          message: {
-            role: 'assistant',
-            content: response.choices[0]?.message.content,
-          },
-          index: 0,
-          logprobs: null,
-          finish_reason: '',
+      // Only the first answer used to be returned, so asking for more than one
+      // silently got back one. The finish reason was the empty string whatever
+      // the model did, which left a truncated answer looking exactly like a
+      // complete one — the distinction the caller needs most.
+      choices: response.choices.map((c) => ({
+        message: {
+          role: 'assistant',
+          content: c.message.content,
+          ...transformReasoning(c.message, strictOpenAiCompliance),
         },
-      ],
+        index: c.index,
+        logprobs: null,
+        finish_reason: transformFinishReason(
+          c.finish_reason as PROVIDER_FINISH_REASON,
+          strictOpenAiCompliance,
+        ),
+      })),
       usage: {
+        // Carried whole: what Perplexity charges for beyond the three counts is
+        // reported beside them, and naming only some of it dropped the rest.
+        ...response.usage,
         prompt_tokens: response.usage.prompt_tokens,
         completion_tokens: response.usage.completion_tokens,
         total_tokens: response.usage.total_tokens,
-        num_search_queries: response.usage.num_search_queries,
+        // Reported flat by Perplexity, and under the breakdown by everyone else,
+        // which is where the Responses adapter reads it from.
+        ...(response.usage.reasoning_tokens !== undefined && {
+          completion_tokens_details: {
+            ...(response.usage as any).completion_tokens_details,
+            reasoning_tokens: response.usage.reasoning_tokens,
+          },
+        }),
       },
     };
   }
@@ -215,6 +257,9 @@ export const PerplexityAIChatCompleteStreamChunkTransform: (
           delta: {
             role: parsedChunk.choices[0]?.delta.role,
             content: parsedChunk.choices[0]?.delta.content,
+            ...(parsedChunk.choices[0]?.delta.reasoning_content && {
+              reasoning_content: parsedChunk.choices[0].delta.reasoning_content,
+            }),
           },
           index: 0,
           finish_reason: parsedChunk.choices[0]?.finish_reason,

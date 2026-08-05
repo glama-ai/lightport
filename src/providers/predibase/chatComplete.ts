@@ -2,7 +2,13 @@ import { PREDIBASE } from '../../globals';
 import { Message, Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
-import { generateErrorResponse, generateInvalidProviderResponseError, splitString } from '../utils';
+import {
+  generateErrorResponse,
+  generateInvalidProviderResponseError,
+  splitString,
+  transformReasoning,
+  transformUsageDetails,
+} from '../utils';
 
 export const PredibaseChatCompleteConfig: ProviderConfig = {
   model: {
@@ -103,7 +109,14 @@ export interface PredibaseErrorResponse extends ErrorResponse {}
 export const PredibaseChatCompleteResponseTransform: (
   response: PredibaseChatCompleteResponse | PredibaseErrorResponse,
   responseStatus: number,
-) => ChatCompletionResponse | ErrorResponse = (response, responseStatus) => {
+  responseHeaders: Headers,
+  strictOpenAiCompliance: boolean,
+) => ChatCompletionResponse | ErrorResponse = (
+  response,
+  responseStatus,
+  _responseHeaders,
+  strictOpenAiCompliance,
+) => {
   if ('error' in response && responseStatus !== 200) {
     return generateErrorResponse(
       {
@@ -125,7 +138,11 @@ export const PredibaseChatCompleteResponseTransform: (
       provider: PREDIBASE,
       choices: response.choices.map((c) => ({
         index: c.index,
-        message: c.message,
+        // The message is carried whole, so the reasoning was never lost here.
+        // What was missing is the gateway's own way of carrying it, which the
+        // Messages and Responses adapters read exclusively: without it a
+        // reasoner's thinking arrived through those adapters as nothing at all.
+        message: { ...c.message, ...transformReasoning(c.message, strictOpenAiCompliance) },
         logprobs: c.logprobs,
         finish_reason: c.finish_reason,
       })),
@@ -133,6 +150,7 @@ export const PredibaseChatCompleteResponseTransform: (
         prompt_tokens: response.usage?.prompt_tokens || 0,
         completion_tokens: response.usage?.completion_tokens || 0,
         total_tokens: response.usage?.total_tokens || 0,
+        ...transformUsageDetails(response.usage),
       },
     };
   }

@@ -2,7 +2,12 @@ import { ZHIPU } from '../../globals';
 import { Message, Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
-import { generateErrorResponse, generateInvalidProviderResponseError } from '../utils';
+import {
+  generateErrorResponse,
+  generateInvalidProviderResponseError,
+  transformReasoning,
+  transformUsageDetails,
+} from '../utils';
 
 export const ZhipuChatCompleteConfig: ProviderConfig = {
   model: {
@@ -81,7 +86,14 @@ interface ZhipuStreamChunk {
 export const ZhipuChatCompleteResponseTransform: (
   response: ZhipuChatCompleteResponse | ZhipuErrorResponse,
   responseStatus: number,
-) => ChatCompletionResponse | ErrorResponse = (response, responseStatus) => {
+  responseHeaders: Headers,
+  strictOpenAiCompliance: boolean,
+) => ChatCompletionResponse | ErrorResponse = (
+  response,
+  responseStatus,
+  _responseHeaders,
+  strictOpenAiCompliance,
+) => {
   if ('message' in response && responseStatus !== 200) {
     return generateErrorResponse(
       {
@@ -106,6 +118,7 @@ export const ZhipuChatCompleteResponseTransform: (
         message: {
           role: c.message.role,
           content: c.message.content,
+          ...transformReasoning(c.message, strictOpenAiCompliance),
         },
         finish_reason: c.finish_reason,
       })),
@@ -113,6 +126,7 @@ export const ZhipuChatCompleteResponseTransform: (
         prompt_tokens: response.usage?.prompt_tokens,
         completion_tokens: response.usage?.completion_tokens,
         total_tokens: response.usage?.total_tokens,
+        ...transformUsageDetails(response.usage),
       },
     };
   }

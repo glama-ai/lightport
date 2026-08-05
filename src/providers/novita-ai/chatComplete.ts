@@ -2,7 +2,12 @@ import { NOVITA_AI } from '../../globals';
 import { Message, Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
-import { generateErrorResponse, generateInvalidProviderResponseError } from '../utils';
+import {
+  generateErrorResponse,
+  generateInvalidProviderResponseError,
+  transformReasoning,
+  transformUsageDetails,
+} from '../utils';
 
 // TODOS: this configuration does not enforce the maximum token limit for the input parameter. If you want to enforce this, you might need to add a custom validation function or a max property to the ParameterConfig interface, and then use it in the input configuration. However, this might be complex because the token count is not a simple length check, but depends on the specific tokenization method used by the model.
 
@@ -101,11 +106,16 @@ export interface NovitaAIChatCompletionStreamChunk {
   model: string;
   request_id: string;
   object: string;
+  usage?: Record<string, any>;
   choices: {
     index: number;
     delta: {
-      content: string;
+      role?: string;
+      content?: string;
+      reasoning_content?: string;
+      tool_calls?: any[];
     };
+    finish_reason?: string | null;
   }[];
 }
 
@@ -152,7 +162,14 @@ export const NovitaAIChatCompleteResponseTransform: (
     | NovitaAIErrorResponse
     | NovitaAIOpenAICompatibleErrorResponse,
   responseStatus: number,
-) => ChatCompletionResponse | ErrorResponse = (response, responseStatus) => {
+  responseHeaders: Headers,
+  strictOpenAiCompliance: boolean,
+) => ChatCompletionResponse | ErrorResponse = (
+  response,
+  responseStatus,
+  _responseHeaders,
+  strictOpenAiCompliance,
+) => {
   if (responseStatus !== 200) {
     const errorResponse = NovitaAIErrorResponseTransform(response as NovitaAIErrorResponse);
     if (errorResponse) return errorResponse;
@@ -170,6 +187,7 @@ export const NovitaAIChatCompleteResponseTransform: (
           message: {
             role: 'assistant',
             content: choice.message.content,
+            ...transformReasoning(choice.message, strictOpenAiCompliance),
             tool_calls: choice.message.tool_calls
               ? choice.message.tool_calls.map((toolCall: any) => ({
                   id: toolCall.id,
@@ -178,8 +196,12 @@ export const NovitaAIChatCompleteResponseTransform: (
                 }))
               : null,
           },
-          index: 0,
-          logprobs: null,
+          // Every choice was numbered zero, so asking for more than one answer
+          // returned a set that all claimed to be the first.
+          index: choice.index,
+          // Was hardcoded to null while `logprobs` is accepted as a request
+          // parameter, so what was asked for was thrown away on return.
+          logprobs: choice.logprobs ?? null,
           finish_reason: choice.finish_reason,
         };
       }),
@@ -187,6 +209,7 @@ export const NovitaAIChatCompleteResponseTransform: (
         prompt_tokens: response.usage?.prompt_tokens,
         completion_tokens: response.usage?.completion_tokens,
         total_tokens: response.usage?.total_tokens,
+        ...transformUsageDetails(response.usage),
       },
     };
   }
@@ -211,15 +234,17 @@ export const NovitaAIChatCompleteStreamChunkTransform: (response: string) => str
       created: Math.floor(Date.now() / 1000),
       model: parsedChunk.model,
       provider: NOVITA_AI,
-      choices: [
-        {
-          delta: {
-            content: parsedChunk.choices[0]?.delta.content,
-          },
-          index: parsedChunk.choices[0]?.index || 0,
-          finish_reason: '',
-        },
-      ],
+      // The delta was rebuilt as content alone, which dropped the reasoning a
+      // thinking model streams beside it, along with the role opening the
+      // message and any tool call. The finish reason was the empty string
+      // whatever the model did, so a stream cut short for length looked like one
+      // that ran to completion, and only the first choice was ever forwarded.
+      choices: parsedChunk.choices.map((choice) => ({
+        delta: choice.delta,
+        index: choice.index,
+        finish_reason: choice.finish_reason ?? null,
+      })),
+      ...(parsedChunk.usage && { usage: parsedChunk.usage }),
     })}` + '\n\n'
   );
 };
