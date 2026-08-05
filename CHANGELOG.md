@@ -203,6 +203,16 @@ that answered and said nothing:
   and once for Vertex, and is now written once so the two cannot drift apart —
   though the generation config around it is still two copies.
 
+- The name an assumed AWS role was given named a day that was not the day. The
+  month was counted from zero and neither part was padded, so a call made on the
+  25th of November was recorded as `20261025` — eight digits, well formed, and a
+  month early — while the earlier months ran their digits together into something
+  that was not a date at all. The name is written into CloudTrail and into the
+  cost report against every Bedrock and SageMaker call made with the role, where
+  a date that merely looks right is worse than one that obviously is not. It is
+  now the day it was made on. Nothing else changes: the name is no part of what
+  the credentials are cached under, and STS took the old one as readily as the
+  new.
 - A failed text completion reached the caller as the provider had written it.
   The shared transform for that endpoint built the named and reshaped error and
   then dropped it, where the one for chat returns it, so the same failure read

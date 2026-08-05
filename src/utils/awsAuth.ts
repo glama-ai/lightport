@@ -517,6 +517,14 @@ export async function fetchECSTaskRoleArnFromMetadata(
   return null;
 }
 
+/**
+ * The name an assumed role is given for the day, as `YYYYMMDD`. Padded, and
+ * counting months the way the rest of the world does, so that the name reads as
+ * the date it was made on. STS takes `[\w+=,.@-]{2,64}`, which this is.
+ */
+export const buildRoleSessionName = (date: Date) =>
+  date.toISOString().slice(0, 10).replace(/-/g, '');
+
 export async function fetchSTSAssumeRoleCredentials(
   awsRoleArn: string,
   awsRegion: string,
@@ -538,8 +546,13 @@ export async function fetchSTSAssumeRoleCredentials(
     sha256: Sha256,
   });
 
-  const date = new Date();
-  const sessionName = `${date.getFullYear()}${date.getMonth()}${date.getDate()}`;
+  // The month is counted from zero and neither part was padded, so this named a
+  // day that was not the day: November read as October, and the earlier months
+  // ran their digits together into something no length at all. The name is
+  // written into CloudTrail and into the cost report against every call made
+  // with the role, where a date that merely looks right is worse than one that
+  // obviously is not — nobody questions the first.
+  const sessionName = buildRoleSessionName(new Date());
   const url = `https://${hostname}?Action=AssumeRole&Version=2011-06-15&RoleArn=${awsRoleArn}&RoleSessionName=${sessionName}${externalId ? `&ExternalId=${externalId}` : ''}`;
   const urlObj = new URL(url);
   const requestHeaders = { host: hostname };
