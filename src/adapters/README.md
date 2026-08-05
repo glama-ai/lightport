@@ -129,9 +129,19 @@ from any provider that supports it (Anthropic, Google, etc.) without setting any
 
 ### ❌ Not Supported (Responses API-only features)
 
-- `previous_response_id` state management
-- Built-in tools (web_search, file_search, computer_use)
-- `input_file` content type
+Refused with a 400 naming the field, rather than served as though it had been
+honoured:
+
+- `previous_response_id` and `conversation` — state held on the provider's side
+- `prompt` — a stored template, whose instructions are never fetched
+- `background: true` — collecting the result later is refused in its own right
+- `include` — content asked for that will not be in the answer
+- Built-in tools (`web_search`, `file_search`, `computer_use`): only a function
+  reaches the model
+
+Served, with a warning in the log naming what nothing acted on: `truncation:
+'auto'`, `service_tier`, `prompt_cache_key`, `prompt_cache_retention`,
+`max_tool_calls`, `safety_identifier`.
 
 ## Provider-Specific Parameters
 

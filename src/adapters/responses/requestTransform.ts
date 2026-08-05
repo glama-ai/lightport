@@ -220,3 +220,66 @@ function transformContent(content: any): string | ContentType[] {
 
   return parts.length ? parts : '';
 }
+
+/**
+ * What a Responses request asks for that translating it into a chat completion
+ * cannot give it.
+ *
+ * The translation is a single stateless call: nothing is kept between turns,
+ * nothing is left behind to fetch afterwards, and the only tool the model is
+ * offered is a function the caller supplied. Some of what the Responses API
+ * offers rests on the opposite, and a request built on it cannot be served by
+ * this route however well the call itself goes.
+ *
+ * Refused where answering would mean saying something untrue — a conversation
+ * continued from a response that was never stored, a prompt template whose
+ * instructions never reached the model, a search that was never run. Ignored
+ * where the request still means what it said: those ask for the answer to be
+ * arrived at differently, not for a different answer.
+ *
+ * A field only counts when it asks for something. `background: false` is
+ * satisfied by doing nothing and `truncation: 'disabled'` is what already
+ * happens, so neither is either. `store` is not here at all: it defaults to true
+ * upstream, so refusing it would turn on whether the caller wrote down the
+ * default rather than on what they meant, and the one consequence that is not
+ * honoured — fetching the response later — is already refused in its own right.
+ */
+export const findUnsupportedResponsesFields = (
+  req: Record<string, any> | undefined,
+): { refused: string[]; ignored: string[] } => {
+  const refused: string[] = [];
+  const ignored: string[] = [];
+
+  // Both name a conversation held on the provider's side, which there is none
+  // of here; upstream will not take the two together either.
+  if (req?.previous_response_id) refused.push('previous_response_id');
+  if (req?.conversation) refused.push('conversation');
+
+  // A stored template, whose instructions and variables are the greater part of
+  // what was asked and none of which is fetched.
+  if (req?.prompt) refused.push('prompt');
+
+  // `true` however it is spelled: a form-encoded body arrives as strings, so a
+  // strict comparison would let the request through the way it came.
+  if (req?.background === true || req?.background === 'true') refused.push('background');
+
+  // Content asked for that will not be in the answer. `reasoning.encrypted_content`
+  // is the one way a stateless caller carries reasoning between turns, so losing
+  // it quietly breaks the very thing this route can otherwise do.
+  if (Array.isArray(req?.include) && req.include.length > 0) refused.push('include');
+
+  // Only a function reaches the model — a search or an interpreter the caller
+  // asked for is dropped, and the answer comes back as though it had run.
+  if (Array.isArray(req?.tools) && req.tools.some((tool: any) => tool?.type !== 'function')) {
+    refused.push('tools');
+  }
+
+  if (req?.truncation === 'auto') ignored.push('truncation');
+  if (req?.service_tier && req.service_tier !== 'auto') ignored.push('service_tier');
+  if (req?.prompt_cache_key) ignored.push('prompt_cache_key');
+  if (req?.prompt_cache_retention) ignored.push('prompt_cache_retention');
+  if (req?.max_tool_calls != null) ignored.push('max_tool_calls');
+  if (req?.safety_identifier) ignored.push('safety_identifier');
+
+  return { refused, ignored };
+};

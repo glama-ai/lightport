@@ -5,7 +5,10 @@
  * to/from the Chat Completions format at the handler level.
  */
 
-export { transformResponsesToChatCompletions } from './requestTransform';
+export {
+  transformResponsesToChatCompletions,
+  findUnsupportedResponsesFields,
+} from './requestTransform';
 export { transformChatCompletionsToResponses } from './responseTransform';
 export { transformStreamChunk, createStreamState } from './streamTransform';
 

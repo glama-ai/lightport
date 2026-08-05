@@ -24,6 +24,7 @@ import {
   transformStreamChunk as responsesTransformStreamChunk,
   createStreamState as responsesCreateStreamState,
   supportsResponsesApiNatively,
+  findUnsupportedResponsesFields,
 } from '../adapters/responses';
 import { logger } from '../logger';
 import { endpointStrings } from '../providers/types';
@@ -100,6 +101,40 @@ export function applyAdapterRequestTransform(
   }
 
   if (fn === 'createModelResponse' && provider && !supportsResponsesApiNatively(provider)) {
+    const { refused, ignored } = findUnsupportedResponsesFields(params as Record<string, any>);
+
+    // This provider is served by translating the request into a chat completion,
+    // which keeps nothing between turns and leaves nothing to fetch afterwards.
+    // A request built on that is refused rather than answered as though it had
+    // been honoured — a conversation continued from a response that was never
+    // stored comes back with no memory of it, and a 200 saying all was well.
+    if (refused.length) {
+      const plural = refused.length > 1;
+
+      return openAiErrorResponse(
+        {
+          message:
+            `${refused.join(', ')} ${plural ? 'are' : 'is'} only supported for providers that ` +
+            `serve the Responses API themselves, and ${provider} is served by translating the ` +
+            `request into a chat completion. Drop ${plural ? 'them' : 'it'}, or send this to a ` +
+            `provider that serves the Responses API natively.`,
+          type: 'invalid_request_error',
+          param: refused[0],
+        },
+        400,
+      );
+    }
+
+    // The rest change how the answer is arrived at rather than what is asked
+    // for, so the request is served — but nothing acts on them, and saying so is
+    // the difference between a caller knowing that and assuming otherwise.
+    if (ignored.length) {
+      logger.warn(
+        { ignored, provider },
+        'responses request names behaviour the translation to chat completions cannot provide',
+      );
+    }
+
     const originalRequest =
       requestBody instanceof ReadableStream || requestBody instanceof FormData
         ? {}

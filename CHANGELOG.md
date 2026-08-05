@@ -48,6 +48,44 @@ used to end now sends text completions, embeddings and image generation to
 guardrails. None of them is implemented, and a request carrying any is served
 with a warning in the log naming which. Nothing that worked before stops working.
 
+**A Responses request the translation cannot carry out is refused.**
+
+Five providers serve the Responses API themselves. Every other one is served by
+translating the request into a chat completion, which is a single stateless call:
+nothing is kept between turns, nothing is left behind to fetch afterwards, and
+the only tool the model is offered is a function the caller supplied. A request
+resting on any of that used to be answered as though it had been given — a
+conversation continued from a response that was never stored came back with no
+memory of it, and a 200 to say all was well. These are now a 400 naming the
+field:
+
+- `previous_response_id` and `conversation`, which name a conversation held on
+  the provider's side that there is none of here.
+- `prompt`, a stored template whose instructions were the greater part of what
+  was asked and were never fetched.
+- `background: true`, which asks to return at once and be collected later —
+  collecting it was already refused.
+- `include`, which asks for content that will not be in the answer.
+  `reasoning.encrypted_content` is how a stateless caller carries reasoning
+  between turns, so losing it quietly broke the one thing this route can
+  otherwise do.
+- `tools` naming anything but a function. A search or an interpreter was dropped
+  and the answer came back as though it had run.
+
+`background: false` and `truncation: 'disabled'` are unaffected: asking for none
+of a thing is satisfied by having none of it. `store` is not refused either — it
+defaults to true upstream, so refusing it would turn on whether the caller wrote
+the default down rather than on what they meant, and the one consequence not
+honoured, fetching the response later, is already refused in its own right.
+Nothing changes for the providers that serve the API natively, where every field
+reaches the provider as before.
+
+`truncation: 'auto'`, `service_tier`, `prompt_cache_key`, `prompt_cache_retention`,
+`max_tool_calls` and `safety_identifier` are **not** refused. They ask for the
+answer to be arrived at differently rather than for a different answer, so the
+request still means what it said and is served — with a warning in the log naming
+what nothing acted on.
+
 ### Added
 
 **Requesty is available as a provider.** It routes to models from several houses
