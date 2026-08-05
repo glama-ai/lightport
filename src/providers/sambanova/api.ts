@@ -9,6 +9,8 @@ const SambaNovaAPIConfig: ProviderAPIConfig = {
     switch (fn) {
       case 'chatComplete':
         return '/v1/chat/completions';
+      case 'complete':
+        return '/v1/completions';
       default:
         return '';
     }

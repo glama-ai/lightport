@@ -284,6 +284,11 @@ const CompleteResponseTransformer = <T extends OpenAICompleteResponse | ErrorRes
       if (customTransformer) {
         return customTransformer(errorResponse, true);
       }
+
+      // The transformed error was built and then dropped, so a failure on this
+      // endpoint reached the caller as the provider had written it while the
+      // same failure on chat arrived named and reshaped.
+      return errorResponse;
     }
 
     if (customTransformer) {

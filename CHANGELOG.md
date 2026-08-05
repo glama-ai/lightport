@@ -30,6 +30,44 @@ in the caller.
 request carrying them is served with a warning in the log. Nothing that worked
 before stops working.
 
+### Added
+
+Text completions reach Cerebras, Hyperbolic, SambaNova and nScale.
+`/v1/completions` was already served, but a provider is only routed there if it
+names a `complete` config, and these four did not, so a request to them was
+refused with `complete is not supported by <provider>` however faithfully they
+served the endpoint themselves.
+
+Which four was the work. Of the fifteen providers built on the shared
+OpenAI-compatible base without `complete`, these are the ones whose own
+documentation describes a text-completion endpoint reachable the way this gateway
+reaches it. Groq lists text completions among the OpenAI endpoints it does not
+serve. Upstage, Kluster, Krutrim, Lemonfox, IO Intelligence and AI Badgr describe
+none. DashScope describes one, but only on its mainland hosts, where this
+provider is pointed at the international one; Inference.net refers to one without
+documenting how to call it. None of them are added on the strength of being
+OpenAI-shaped, and a test records each omission so that reversing it is a
+decision with a source behind it. Vertex AI resolves its own config per backend
+and is not this kind of provider, and z-ai is registered without being a valid
+provider, so nothing reaches it either way.
+
+This is the shared-base family only. Around forty other registered providers
+still name no `complete`, some of which — DeepInfra and SiliconFlow among them —
+do serve one.
+
+The parameters each accepts are its own, and are taken from what each publishes
+for completions rather than from what it publishes for chat. The two differ:
+Cerebras excludes `logprobs` from chat and takes it here, up to 20 where the
+shared default stops at 5; SambaNova is the other way round, and takes the
+`logit_bias` and `seed` its chat config leaves out; nScale takes `seed` too.
+Hyperbolic publishes no list, so nothing is excluded — dropping a parameter it
+accepts would lose it silently, where forwarding one it does not lets it say so
+itself.
+
+SambaNova separates its events with a single newline, so its streamed
+completions are re-framed as SSE on the way out. Handed on as they arrived they
+would have reached the caller as a body no event parser will read.
+
 ### Fixed
 
 A mid-stream failure now reaches the caller as a failure. Previously it could
@@ -137,6 +175,10 @@ that answered and said nothing:
     from none sent. It now takes the same placeholder opening as a conversation
     that does not begin with a human turn.
 
+- A failed text completion reached the caller as the provider had written it.
+  The shared transform for that endpoint built the named and reshaped error and
+  then dropped it, where the one for chat returns it, so the same failure read
+  differently depending on which endpoint it came from.
 - Bedrock reported a usage object whose parts did not sum to its total. Bedrock
   documents `inputTokens` as the non-cached input alone, the whole input being
   `inputTokens + cacheReadInputTokens + cacheWriteInputTokens`, but does not say

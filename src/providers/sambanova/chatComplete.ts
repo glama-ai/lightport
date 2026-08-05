@@ -31,6 +31,17 @@ export interface SambaNovaStreamChunk {
   };
 }
 
+// SambaNova separates its events with a single newline, so the stream is read
+// on `\n` rather than `\n\n`. Without a transform each part is handed on with
+// the separator it was split by put back, which is not the blank line SSE ends
+// an event with — the caller receives a body no event parser will read, and not
+// even the `[DONE]` that would end it. The event is re-framed and otherwise left
+// exactly as SambaNova wrote it, which for completions is already the shape the
+// caller expects.
+export const SambaNovaCompleteStreamChunkTransform: (response: string) => string = (
+  responseChunk,
+) => `${responseChunk.trim()}\n\n`;
+
 export const SambaNovaChatCompleteStreamChunkTransform: (response: string) => string = (
   responseChunk,
 ) => {

@@ -1,8 +1,11 @@
 import { SAMBANOVA } from '../../globals';
-import { chatCompleteParams, responseTransformers } from '../open-ai-base';
+import { chatCompleteParams, completeParams, responseTransformers } from '../open-ai-base';
 import { ProviderConfigs } from '../types';
 import SambaNovaAPIConfig from './api';
-import { SambaNovaChatCompleteStreamChunkTransform } from './chatComplete';
+import {
+  SambaNovaChatCompleteStreamChunkTransform,
+  SambaNovaCompleteStreamChunkTransform,
+} from './chatComplete';
 
 const SambaNovaConfig: ProviderConfigs = {
   chatComplete: chatCompleteParams(
@@ -23,9 +26,16 @@ const SambaNovaConfig: ProviderConfigs = {
       model: 'Meta-Llama-3.1-8B-Instruct',
     },
   ),
+  // Taken from what SambaNova publishes for completions, which is not what it
+  // publishes for chat: `logprobs` it names as not yet supported there, while
+  // chat has it, and `logit_bias` and `seed` are the other way round. No model
+  // is defaulted, the one chat names having since been withdrawn — a request
+  // that does not choose is better told so than sent to a model that is gone.
+  complete: completeParams(['presence_penalty', 'frequency_penalty', 'user', 'logprobs']),
   api: SambaNovaAPIConfig,
   responseTransforms: {
     ...responseTransformers(SAMBANOVA, {
+      complete: true,
       chatComplete: (response, isError) => {
         if (isError || !('choices' in response)) return response;
 
@@ -48,6 +58,7 @@ const SambaNovaConfig: ProviderConfigs = {
       },
     }),
     'stream-chatComplete': SambaNovaChatCompleteStreamChunkTransform,
+    'stream-complete': SambaNovaCompleteStreamChunkTransform,
   },
 };
 

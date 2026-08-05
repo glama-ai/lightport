@@ -14,6 +14,8 @@ const HyperbolicAPIConfig: ProviderAPIConfig = {
     switch (fn) {
       case 'chatComplete':
         return '/v1/chat/completions';
+      case 'complete':
+        return '/v1/completions';
       case 'imageGenerate':
         return '/v1/image/generation';
       default:

@@ -9,6 +9,8 @@ const NscaleAPIConfig: ProviderAPIConfig = {
     switch (fn) {
       case 'chatComplete':
         return '/chat/completions';
+      case 'complete':
+        return '/completions';
       case 'imageGenerate':
         return '/images/generations';
       default:
