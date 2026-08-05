@@ -1,5 +1,8 @@
-import { DeepSeekChatCompleteResponseTransform } from '../chatComplete';
-import type { ErrorResponse } from '../../types';
+import {
+  DeepSeekChatCompleteResponseTransform,
+  DeepSeekChatCompleteStreamChunkTransform,
+} from '../chatComplete';
+import type { ChatCompletionResponse, ErrorResponse } from '../../types';
 import { describe, expect, it } from 'vitest';
 
 const transform = (response: unknown, status: number) =>
@@ -68,6 +71,125 @@ describe('DeepSeekChatCompleteResponseTransform', () => {
     expect(result).toMatchObject({
       provider: 'deepseek',
       choices: [{ message: { content: 'pong' } }],
+    });
+  });
+
+  describe('reasoning', () => {
+    const reasonerResponse = (message: Record<string, unknown>) => ({
+      id: 'chat-2',
+      object: 'chat.completion',
+      created: 1_700_000_000,
+      model: 'deepseek-reasoner',
+      choices: [{ index: 0, message, finish_reason: 'stop', logprobs: null }],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 90,
+        total_tokens: 100,
+        prompt_cache_hit_tokens: 6,
+        prompt_cache_miss_tokens: 4,
+        completion_tokens_details: { reasoning_tokens: 80 },
+      },
+    });
+
+    const complete = (message: Record<string, unknown>, strict = true) =>
+      DeepSeekChatCompleteResponseTransform(
+        reasonerResponse(message) as never,
+        200,
+        new Headers(),
+        strict,
+      ) as ChatCompletionResponse;
+
+    it('keeps the chain of thought the reasoner replied with', () => {
+      // Rebuilding the message dropped this, so the caller saw only `content`.
+      const result = complete({
+        role: 'assistant',
+        content: 'four',
+        reasoning_content: 'two plus two',
+      });
+
+      expect((result.choices[0].message as any).reasoning_content).toBe('two plus two');
+    });
+
+    it('keeps it under the default, which is strict compliance', () => {
+      // The stream forwards the delta whole and gates nothing, so gating the
+      // non-streaming half would leave the two paths disagreeing by default.
+      const answer = { role: 'assistant', content: '', reasoning_content: 'all of it' };
+
+      const fromResponse = complete(answer, true).choices[0].message as any;
+      const fromStream = JSON.parse(
+        (
+          DeepSeekChatCompleteStreamChunkTransform(
+            `data: ${JSON.stringify({
+              id: 'chat-2',
+              object: 'chat.completion.chunk',
+              created: 1_700_000_000,
+              model: 'deepseek-reasoner',
+              choices: [{ index: 0, delta: answer, finish_reason: null }],
+            })}`,
+            'fallback',
+            {},
+            true,
+          ) as string
+        ).replace(/^data: /, ''),
+      );
+
+      expect(fromResponse.reasoning_content).toBe('all of it');
+      expect(fromStream.choices[0].delta.reasoning_content).toBe('all of it');
+    });
+
+    it('offers the thinking as a content block once compliance is relaxed', () => {
+      // What the Messages and Responses adapters read to rebuild a reasoning block.
+      const result = complete(
+        { role: 'assistant', content: 'four', reasoning_content: 'two plus two' },
+        false,
+      );
+
+      expect((result.choices[0].message as any).content_blocks).toEqual([
+        { type: 'thinking', thinking: 'two plus two' },
+        { type: 'text', text: 'four' },
+      ]);
+    });
+
+    it('leaves the message alone when the model did not reason', () => {
+      const message = complete({ role: 'assistant', content: 'pong' }).choices[0].message as any;
+
+      expect(message).not.toHaveProperty('reasoning_content');
+      expect(message).not.toHaveProperty('content_blocks');
+    });
+
+    it('reports the reasoning tokens that were billed', () => {
+      // Read straight out of here by the Responses adapter.
+      const result = complete({ role: 'assistant', content: 'four' });
+
+      expect(result.usage?.completion_tokens_details?.reasoning_tokens).toBe(80);
+      expect(result.usage?.prompt_tokens_details?.cached_tokens).toBe(6);
+    });
+
+    it('keeps the logprobs it was asked for', () => {
+      const logprobs = { content: [{ token: 'four', logprob: -0.1, bytes: [] }] };
+      const result = complete({ role: 'assistant', content: 'four' });
+
+      expect(result.choices[0].logprobs).toBeNull();
+      expect(
+        (
+          DeepSeekChatCompleteResponseTransform(
+            {
+              ...reasonerResponse({ role: 'assistant', content: 'four' }),
+              choices: [
+                {
+                  index: 0,
+                  message: { role: 'assistant', content: 'four' },
+                  finish_reason: 'stop',
+                  logprobs,
+                },
+              ],
+            } as never,
+            200,
+            new Headers(),
+            true,
+          ) as ChatCompletionResponse
+        ).choices[0].logprobs,
+      ).toEqual(logprobs);
     });
   });
 

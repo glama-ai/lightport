@@ -48,3 +48,10 @@ that answered and said nothing:
   ended a finished one, and dropped upstream error frames while re-framing.
 - Truncation and its cause are now recorded in the log and in Sentry, which the
   caller-facing notice deliberately does not distinguish.
+- DeepSeek's non-streaming responses dropped `reasoning_content`, so a reasoner
+  model answering without a stream came back with its thinking missing, and a
+  turn spent entirely on reasoning came back empty — indistinguishable from a
+  model that said nothing. The streaming path never lost it, which is the only
+  reason this stayed hidden. The same rebuild also dropped `logprobs`, which the
+  provider accepts as a request parameter, and the `completion_tokens_details`
+  and cache counters, so reasoning tokens were billed but never reported.

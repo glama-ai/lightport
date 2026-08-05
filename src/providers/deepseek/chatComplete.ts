@@ -2,7 +2,7 @@ import { DEEPSEEK } from '../../globals';
 import { Message, Params } from '../../types/requestBody';
 import { parseJson } from '../../utils/parseJson';
 import { OpenAIErrorResponseTransform } from '../openai/utils';
-import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
+import { ChatChoice, ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
 import {
   generateErrorResponse,
   generateInvalidProviderResponseError,
@@ -96,16 +96,28 @@ export const DeepSeekChatCompleteConfig: ProviderConfig = {
   },
 };
 
+interface DeepSeekUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  completion_tokens_details?: {
+    reasoning_tokens?: number;
+  };
+}
+
 interface DeepSeekChatCompleteResponse extends ChatCompletionResponse {
   id: string;
   object: string;
   created: number;
   model: 'deepseek-chat' | 'deepseek-coder';
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+  choices: (ChatChoice & {
+    message: Message & {
+      reasoning_content?: string | null;
+    };
+  })[];
+  usage: DeepSeekUsage;
 }
 
 export interface DeepSeekErrorResponse {
@@ -121,15 +133,15 @@ interface DeepSeekStreamChunk {
   object: string;
   created: number;
   model: string;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+  usage?: DeepSeekUsage;
   choices: {
     delta: {
       role?: string | null;
       content?: string;
+      // Forwarded whole below, so this reaches the caller already. It is spelled
+      // out because the non-streaming transform rebuilds the message instead,
+      // and left this out for as long as nothing said it was here.
+      reasoning_content?: string;
       tool_calls?: any[];
     };
     index: number;
@@ -176,22 +188,60 @@ export const DeepSeekChatCompleteResponseTransform: (
       created: response.created,
       model: response.model,
       provider: DEEPSEEK,
-      choices: response.choices.map((c) => ({
-        index: c.index,
-        message: {
-          role: c.message.role,
-          content: c.message.content,
-          ...(c.message.tool_calls && { tool_calls: c.message.tool_calls }),
-        },
-        finish_reason: transformFinishReason(
-          c.finish_reason as DEEPSEEK_STOP_REASON,
-          strictOpenAiCompliance,
-        ),
-      })),
+      choices: response.choices.map((c) => {
+        // The reasoner models answer in two parts, and the chain of thought is
+        // the half that is not `content`. Rebuilding the message field by field
+        // dropped it, so a caller who did not stream was handed a reply with the
+        // thinking missing — and for a turn spent entirely on reasoning, an empty
+        // answer from a model that had in fact responded. The stream never lost
+        // it, because it forwards the delta whole; the two paths disagreed about
+        // what the model said. Keep the field verbatim rather than behind
+        // `strictOpenAiCompliance`, which defaults to on: gating it would leave
+        // the default path dropping reasoning, and the stream gates nothing.
+        const reasoning = c.message.reasoning_content;
+
+        return {
+          index: c.index,
+          message: {
+            role: c.message.role,
+            content: c.message.content,
+            ...(reasoning && { reasoning_content: reasoning }),
+            // The gateway's own way of carrying thinking, which is what the
+            // Messages and Responses adapters read to rebuild a reasoning block.
+            ...(!strictOpenAiCompliance &&
+              reasoning && {
+                content_blocks: [
+                  { type: 'thinking', thinking: reasoning },
+                  { type: 'text', text: c.message.content },
+                ],
+              }),
+            ...(c.message.tool_calls && { tool_calls: c.message.tool_calls }),
+          },
+          // Requested through `logprobs`/`top_logprobs`, which this provider
+          // accepts, and then discarded on the way back.
+          ...(c.logprobs !== undefined && { logprobs: c.logprobs }),
+          finish_reason: transformFinishReason(
+            c.finish_reason as DEEPSEEK_STOP_REASON,
+            strictOpenAiCompliance,
+          ),
+        };
+      }),
       usage: {
         prompt_tokens: response.usage?.prompt_tokens,
         completion_tokens: response.usage?.completion_tokens,
         total_tokens: response.usage?.total_tokens,
+        // Without this the reasoning tokens are billed but never reported, and
+        // the Responses adapter reads `reasoning_tokens` straight from here.
+        ...(response.usage?.completion_tokens_details && {
+          completion_tokens_details: response.usage.completion_tokens_details,
+        }),
+        // DeepSeek names its cache counters itself; every other provider reports
+        // the hit under the OpenAI-shaped `prompt_tokens_details`.
+        ...(response.usage?.prompt_cache_hit_tokens !== undefined && {
+          prompt_tokens_details: {
+            cached_tokens: response.usage.prompt_cache_hit_tokens,
+          },
+        }),
       },
     };
   }
