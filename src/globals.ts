@@ -104,6 +104,7 @@ export const AIBADGR: string = 'aibadgr';
 export const OVHCLOUD: string = 'ovhcloud';
 export const LATITUDE: string = 'latitude';
 export const DATABRICKS: string = 'databricks';
+export const REQUESTY: string = 'requesty';
 export const PINECONE: string = 'pinecone';
 
 export const VALID_PROVIDERS = [
@@ -171,6 +172,7 @@ export const VALID_PROVIDERS = [
   OVHCLOUD,
   LATITUDE,
   DATABRICKS,
+  REQUESTY,
   PINECONE,
 ];
 

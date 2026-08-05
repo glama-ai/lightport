@@ -87,7 +87,13 @@ export const getMessagesConfig = ({
   if (defaultValues) {
     Object.keys(defaultValues).forEach((key) => {
       if (!Array.isArray(baseParams[key])) {
-        baseParams[key].default = defaultValues[key];
+        // Replaced rather than written into. The spread above copies one level
+        // deep, so each parameter is still the object the shared config holds,
+        // and a default written into it would be the default for Anthropic,
+        // Bedrock, Vertex and Azure alike. No caller names one today, which is
+        // the only reason this has not happened here as it did on the OpenAI
+        // side.
+        baseParams[key] = { ...baseParams[key], default: defaultValues[key] };
       }
     });
   }

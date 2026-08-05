@@ -32,6 +32,22 @@ before stops working.
 
 ### Added
 
+**Requesty is available as a provider.** It routes to models from several houses
+under names that say which — `openai/gpt-4o-mini`, `anthropic/claude-sonnet-4-5`
+— behind an endpoint that is OpenAI's own shape, so it takes OpenAI's parameters
+under their own names, `reasoning_effort` among them, with the same
+`developer`-to-`system` rewriting every provider on that base does. Chat
+completions only: Requesty answers a text completion with a 404. Set
+`x-lightport-provider: requesty` and an API key from app.requesty.ai.
+
+The response is carried whole rather than rebuilt, so nothing it sends is lost
+for not having been named. What is added to it is the provider's name and the
+content-block form of the reasoning: Requesty reports a model's thinking as
+`reasoning_content`, and the Responses API reads a reasoning turn from
+`content_blocks` when it is not streaming, so through it a reasoner would
+otherwise have answered with its thinking missing. Streamed, it arrives either
+way.
+
 Text completions reach Cerebras, Hyperbolic, SambaNova and nScale.
 `/v1/completions` was already served, but a provider is only routed there if it
 names a `complete` config, and these four did not, so a request to them was
@@ -203,6 +219,18 @@ that answered and said nothing:
   and once for Vertex, and is now written once so the two cannot drift apart —
   though the generation config around it is still two copies.
 
+- A default model one provider named was sent by all of them. The shared
+  OpenAI-compatible base copies its parameters one level deep, so each was still
+  the very object OpenAI's own config holds, and writing a default into it wrote
+  that default everywhere. Whichever provider named one last won: a request that
+  named no model was sent `glm-4.6` — Zhipu's — whether it was bound for Groq,
+  Cerebras, Nebius, SambaNova, x-ai or OpenAI itself. Each now keeps what it
+  chose, and the providers that chose nothing keep OpenAI's. The model is the
+  only parameter this reached: a default is only filled in for one the provider
+  requires, and the model is the one that is. Had it reached the others, no
+  provider names a `max_tokens`, `temperature` or `top_p` today for it to have
+  leaked. The same mistake sits unexercised in the Anthropic base, where nothing
+  names a default yet, and is corrected there too.
 - The name an assumed AWS role was given named a day that was not the day. The
   month was counted from zero and neither part was padded, so a call made on the
   25th of November was recorded as `20261025` — eight digits, well formed, and a

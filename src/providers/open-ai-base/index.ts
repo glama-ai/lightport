@@ -45,7 +45,11 @@ export const createModelResponseParams = (
 
   Object.keys(defaultValues).forEach((key) => {
     if (Object.hasOwn(baseParams, key) && !Array.isArray(baseParams[key])) {
-      baseParams[key].default = defaultValues[key];
+      // Replaced rather than written into. The spread above copies the config
+      // one level deep, so each parameter is still the very object OpenAI's own
+      // config holds — and writing a default into it set that default for every
+      // provider built on this base, including OpenAI itself.
+      baseParams[key] = { ...baseParams[key], default: defaultValues[key] };
     }
   });
 
@@ -80,7 +84,9 @@ export const chatCompleteParams = (
 
   Object.keys(defaultValues ?? {}).forEach((key) => {
     if (Object.hasOwn(baseParams, key) && !Array.isArray(baseParams[key])) {
-      baseParams[key].default = defaultValues?.[key];
+      // Replaced rather than written into, as above: whichever provider named a
+      // default last named it for all of them.
+      baseParams[key] = { ...baseParams[key], default: defaultValues?.[key] };
     }
   });
 

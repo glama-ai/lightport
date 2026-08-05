@@ -59,6 +59,7 @@ import QdrantConfig from './qdrant';
 import RecraftAIConfig from './recraft-ai';
 import RekaAIConfig from './reka-ai';
 import ReplicateConfig from './replicate';
+import RequestyConfig from './requesty';
 import SagemakerConfig from './sagemaker';
 import SambaNovaConfig from './sambanova';
 import SegmindConfig from './segmind';
@@ -129,6 +130,7 @@ const Providers: { [key: string]: ProviderConfigs } = {
   'recraft-ai': RecraftAIConfig,
   milvus: MilvusConfig,
   replicate: ReplicateConfig,
+  requesty: RequestyConfig,
   lepton: LeptonConfig,
   'kluster-ai': KlusterAIConfig,
   nscale: NscaleConfig,
