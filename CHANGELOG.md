@@ -26,6 +26,24 @@ such a config named no provider and the request already failed — on
 fails at validation with a 400 that says why. Handle failover and load balancing
 in the caller.
 
+**Workers AI chat completions go to a different route.**
+
+They were sent to `…/ai/run/{model}`, which names the model in the path, and now
+go to `…/ai/v1/chat/completions`, which names it in the body. What that changes
+for a caller sending nothing unusual: `raw` is no longer forwarded, being a
+parameter of the route no longer used; `finish_reason` is the model's own rather
+than the empty string; `id` is Cloudflare's rather than a timestamp; and `usage`
+is reported. Cloudflare describes the OpenAI-compatible route as serving text
+generation without naming which models, so a chat model it does not serve there
+is now out of reach — nothing in its documentation says there is one.
+
+The address also changed shape. `/run` moved out of the base and into the three
+endpoints that still name the model in a path, since chat completions no longer
+do. A `custom_host` replaces the base entire, so one written to end where the base
+used to end now sends text completions, embeddings and image generation to
+`…/run/{model}` beneath it rather than `…/{model}`. Point it at the account's
+`/ai` and the four endpoints address themselves.
+
 `retry` and `cache` are **not** refused, and neither are the hooks and
 guardrails. None of them is implemented, and a request carrying any is served
 with a warning in the log naming which. Nothing that worked before stops working.
@@ -47,6 +65,28 @@ content-block form of the reasoning: Requesty reports a model's thinking as
 `content_blocks` when it is not streaming, so through it a reasoner would
 otherwise have answered with its thinking missing. Streamed, it arrives either
 way.
+
+**Workers AI reports what a turn cost, why it stopped, and any tool it asked
+for.** A completion arrived with no usage, no tool call, and a finish reason of
+the empty string. Only the last of those was the route's doing: it names `usage`
+and `tool_calls` in its own output schema and takes `tools` as a parameter, and
+none of the three was asked for or read. The reply was read for its text alone,
+so tool calling was unreachable at both ends.
+
+Moving to the OpenAI-compatible route (above) lets the reply be carried whole
+rather than read a field at a time, which is what stops a field being lost for not
+having been named. `tools`, `tool_choice`, `stream_options` and the usual OpenAI
+sampling parameters are now sent. Cloudflare documents that route by example
+rather than by parameter list, so what is sent is what an OpenAI-shaped route is
+expected to take — on the footing that a parameter it ignores is no worse than
+one never sent, which is an assumption rather than something its documentation
+settles.
+
+The older reply shape is still read, for a custom host mapping this path onto the
+route it came from, and now for everything that shape carries rather than the text
+alone. What that route has no way to report is the reason for stopping, so a turn
+answered through it that asked for a tool says so, and one that did not says
+nothing — the same empty string as before.
 
 Text completions reach Cerebras, Hyperbolic, SambaNova and nScale.
 `/v1/completions` was already served, but a provider is only routed there if it
