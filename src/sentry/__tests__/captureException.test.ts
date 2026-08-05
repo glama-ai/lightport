@@ -51,7 +51,10 @@ describe('cause chains on captured errors', () => {
   });
 
   it('still relabels a lone exception with no cause chain', async () => {
-    captureException({ error: new Error('read ECONNRESET'), message: 'chatCompletions handler error' });
+    captureException({
+      error: new Error('read ECONNRESET'),
+      message: 'chatCompletions handler error',
+    });
 
     await flush();
 

@@ -1,4 +1,9 @@
-import { buildAgents, getHttpsAgent, getProxyAgent, resolveTransportTimeoutsFrom } from '../agentStore';
+import {
+  buildAgents,
+  getHttpsAgent,
+  getProxyAgent,
+  resolveTransportTimeoutsFrom,
+} from '../agentStore';
 import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { describe, expect, it } from 'vitest';
 
@@ -60,7 +65,7 @@ describe('getHttpsAgent', () => {
     expect(optionsOf(getHttpsAgent())).not.toHaveProperty('allowH2');
   });
 
-  it('always sets a headersTimeout, so a silently dead connection cannot outlive undici\'s notice of it', () => {
+  it("always sets a headersTimeout, so a silently dead connection cannot outlive undici's notice of it", () => {
     buildAgents({});
 
     const { headersTimeout } = optionsOf(getHttpsAgent());
@@ -126,7 +131,9 @@ describe('resolveTransportTimeoutsFrom', () => {
   });
 
   it('ignores non-positive or non-numeric values', () => {
-    expect(resolveTransportTimeoutsFrom({ BODY_TIMEOUT: 'nonsense', HEADERS_TIMEOUT: '-1' })).toEqual({
+    expect(
+      resolveTransportTimeoutsFrom({ BODY_TIMEOUT: 'nonsense', HEADERS_TIMEOUT: '-1' }),
+    ).toEqual({
       headersTimeout: 120_000,
     });
   });

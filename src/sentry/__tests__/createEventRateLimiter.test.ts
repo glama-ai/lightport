@@ -26,24 +26,42 @@ const loneEvent = (message: string): ErrorEvent => ({
 
 describe('createEventRateLimiter grouping key', () => {
   it('buckets a cause chain by the thrown error, not the deepest cause', () => {
-    const limiter = createEventRateLimiter({ globalMaxPerWindow: 100, maxPerWindow: 2, windowMs: 60_000 });
+    const limiter = createEventRateLimiter({
+      globalMaxPerWindow: 100,
+      maxPerWindow: 2,
+      windowMs: 60_000,
+    });
 
     // Same thrown error, different deepest cause each time -- these have to
     // count against the same bucket rather than each getting their own quota.
-    expect(limiter(chainedEvent('read ECONNRESET', 'chatCompletions handler error'), {})).not.toBeNull();
-    expect(limiter(chainedEvent('read ETIMEDOUT', 'chatCompletions handler error'), {})).not.toBeNull();
+    expect(
+      limiter(chainedEvent('read ECONNRESET', 'chatCompletions handler error'), {}),
+    ).not.toBeNull();
+    expect(
+      limiter(chainedEvent('read ETIMEDOUT', 'chatCompletions handler error'), {}),
+    ).not.toBeNull();
     expect(limiter(chainedEvent('socket hang up', 'chatCompletions handler error'), {})).toBeNull();
   });
 
   it('keeps an unrelated error out of that bucket', () => {
-    const limiter = createEventRateLimiter({ globalMaxPerWindow: 100, maxPerWindow: 1, windowMs: 60_000 });
+    const limiter = createEventRateLimiter({
+      globalMaxPerWindow: 100,
+      maxPerWindow: 1,
+      windowMs: 60_000,
+    });
 
-    expect(limiter(chainedEvent('read ECONNRESET', 'chatCompletions handler error'), {})).not.toBeNull();
+    expect(
+      limiter(chainedEvent('read ECONNRESET', 'chatCompletions handler error'), {}),
+    ).not.toBeNull();
     expect(limiter(loneEvent('failed to validate request'), {})).not.toBeNull();
   });
 
   it('still limits a lone exception with no cause chain', () => {
-    const limiter = createEventRateLimiter({ globalMaxPerWindow: 100, maxPerWindow: 1, windowMs: 60_000 });
+    const limiter = createEventRateLimiter({
+      globalMaxPerWindow: 100,
+      maxPerWindow: 1,
+      windowMs: 60_000,
+    });
 
     expect(limiter(loneEvent('boom'), {})).not.toBeNull();
     expect(limiter(loneEvent('boom'), {})).toBeNull();

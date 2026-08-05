@@ -79,4 +79,3 @@ export interface RawContentBlockStopEvent {
 
   type: 'content_block_stop';
 }
-

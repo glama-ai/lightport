@@ -22,4 +22,3 @@ export const FireworksAIEmbedConfig: ProviderConfig = {
     param: 'dimensions',
   },
 };
-

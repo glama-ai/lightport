@@ -86,9 +86,7 @@ const nodeEnv = {
   AZURE_FEDERATED_TOKEN_FILE: getValueOrFileContents(process.env.AZURE_FEDERATED_TOKEN_FILE),
   AZURE_IDENTITY_ENDPOINT: getValueOrFileContents(process.env.AZURE_IDENTITY_ENDPOINT),
   AZURE_MANAGED_VERSION: getValueOrFileContents(process.env.AZURE_MANAGED_VERSION),
-  AZURE_MANAGED_IDENTITY_HEADER: getValueOrFileContents(
-    process.env.AZURE_MANAGED_IDENTITY_HEADER,
-  ),
+  AZURE_MANAGED_IDENTITY_HEADER: getValueOrFileContents(process.env.AZURE_MANAGED_IDENTITY_HEADER),
 
   GCP_AUTH_MODE: getValueOrFileContents(process.env.GCP_AUTH_MODE),
 

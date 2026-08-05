@@ -361,12 +361,11 @@ export async function fetchIMDSv2Token(): Promise<string> {
 
 export async function fetchIMDSRegion(token?: string): Promise<string> {
   const response = await fetchIMDS('/latest/dynamic/instance-identity/document', {
-      ...(token && {
-        method: 'GET',
-        headers: { 'X-aws-ec2-metadata-token': token },
-      }),
-    },
-  );
+    ...(token && {
+      method: 'GET',
+      headers: { 'X-aws-ec2-metadata-token': token },
+    }),
+  });
   if (!response.ok) {
     const txt = await response.text();
     throw new Error(`Failed to get IMDS region: ${txt}`);
@@ -377,14 +376,13 @@ export async function fetchIMDSRegion(token?: string): Promise<string> {
 
 export async function fetchIMDSRoleName(token?: string): Promise<string> {
   const response = await fetchIMDS('/latest/meta-data/iam/security-credentials/', {
-      ...(token && {
-        method: 'GET',
-        headers: {
-          'X-aws-ec2-metadata-token': token,
-        },
-      }),
-    },
-  );
+    ...(token && {
+      method: 'GET',
+      headers: {
+        'X-aws-ec2-metadata-token': token,
+      },
+    }),
+  });
   if (!response.ok) {
     throw new Error(`Failed to get role name: ${response.status}`);
   }
@@ -396,14 +394,13 @@ export async function fetchIMDSCredentials(
   token?: string,
 ): Promise<AWSCredentials | null> {
   const response = await fetchIMDS(`/latest/meta-data/iam/security-credentials/${roleName}`, {
-      ...(token && {
-        method: 'GET',
-        headers: {
-          'X-aws-ec2-metadata-token': token,
-        },
-      }),
-    },
-  );
+    ...(token && {
+      method: 'GET',
+      headers: {
+        'X-aws-ec2-metadata-token': token,
+      },
+    }),
+  });
   if (!response.ok) {
     const error = await response.text();
     logger.info({ error }, 'failed to get credentials');

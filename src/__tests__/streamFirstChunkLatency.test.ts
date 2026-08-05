@@ -60,9 +60,12 @@ const startProvider = async () => {
   return port;
 };
 
-const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+const median = (values: number[]) =>
+  [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
-it('paces Azure OpenAI streams and no others', { retry: 2 }, async () => {
+// The timeout belongs in the options object; passed after the body it was a
+// fourth argument to a function taking three, and the test ran on the default.
+it('paces Azure OpenAI streams and no others', { retry: 2, timeout: 30_000 }, async () => {
   const providerPort = await startProvider();
   const port = await getPort();
   const app = createApp();
@@ -125,4 +128,4 @@ it('paces Azure OpenAI streams and no others', { retry: 2 }, async () => {
 
   // The pause is 25ms; anything above half of it can only be the pause.
   expect(median(paced) - median(unpaced)).toBeGreaterThan(15);
-}, 30_000);
+});

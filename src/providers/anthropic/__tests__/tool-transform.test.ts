@@ -134,9 +134,9 @@ describe('Anthropic message transform - cache_control preservation', () => {
 });
 
 describe('Anthropic API headers', () => {
-  it('falls back to anthropic-beta from request headers', () => {
-    const headers = AnthropicAPIConfig.headers({
-      providerOptions: { apiKey: 'sk-ant-test' },
+  it('falls back to anthropic-beta from request headers', async () => {
+    const headers = await AnthropicAPIConfig.headers({
+      providerOptions: { provider: 'anthropic', apiKey: 'sk-ant-test' },
       gatewayRequestBody: {},
       headers: { 'anthropic-beta': 'prompt-caching-scope-2026-01-05' },
       c: {} as any,
@@ -147,9 +147,13 @@ describe('Anthropic API headers', () => {
     expect(headers['anthropic-beta']).toBe('prompt-caching-scope-2026-01-05');
   });
 
-  it('prefers providerOptions over request headers for anthropic-beta', () => {
-    const headers = AnthropicAPIConfig.headers({
-      providerOptions: { apiKey: 'sk-ant-test', anthropicBeta: 'from-options' },
+  it('prefers providerOptions over request headers for anthropic-beta', async () => {
+    const headers = await AnthropicAPIConfig.headers({
+      providerOptions: {
+        provider: 'anthropic',
+        apiKey: 'sk-ant-test',
+        anthropicBeta: 'from-options',
+      },
       gatewayRequestBody: {},
       headers: { 'anthropic-beta': 'from-request-headers' },
       c: {} as any,
@@ -160,9 +164,9 @@ describe('Anthropic API headers', () => {
     expect(headers['anthropic-beta']).toBe('from-options');
   });
 
-  it('sends OAuth tokens via Authorization header', () => {
-    const headers = AnthropicAPIConfig.headers({
-      providerOptions: { apiKey: 'oauth-token-123' },
+  it('sends OAuth tokens via Authorization header', async () => {
+    const headers = await AnthropicAPIConfig.headers({
+      providerOptions: { provider: 'anthropic', apiKey: 'oauth-token-123' },
       gatewayRequestBody: {},
       c: {} as any,
       fn: 'chatComplete',
@@ -173,9 +177,9 @@ describe('Anthropic API headers', () => {
     expect(headers).not.toHaveProperty('X-API-Key');
   });
 
-  it('sends sk-ant- keys via X-API-Key header', () => {
-    const headers = AnthropicAPIConfig.headers({
-      providerOptions: { apiKey: 'sk-ant-abc123' },
+  it('sends sk-ant- keys via X-API-Key header', async () => {
+    const headers = await AnthropicAPIConfig.headers({
+      providerOptions: { provider: 'anthropic', apiKey: 'sk-ant-abc123' },
       gatewayRequestBody: {},
       c: {} as any,
       fn: 'chatComplete',

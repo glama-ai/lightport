@@ -43,6 +43,5 @@ export const setTruncationNotice = (response: Response, build: () => string | un
   notices.set(response, build);
 };
 
-export const getTruncationNotice = (
-  response: Response,
-): (() => string | undefined) | undefined => notices.get(response);
+export const getTruncationNotice = (response: Response): (() => string | undefined) | undefined =>
+  notices.get(response);

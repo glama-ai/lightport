@@ -74,58 +74,59 @@ describe('guardStreamTransform', () => {
   // upstream's error frame turns "the model refused" into "the connection
   // broke" — and the caller's next move depends on telling those apart. Adding
   // a provider that reintroduces it fails here rather than in production.
+  it.each(streamTransforms)('%s delivers an upstream error as an error', (provider, transform) => {
+    const guarded = guardStreamTransform(transform as Function, provider);
+
+    const out = guarded(errorChunk, 'fallback-id', {}, true, {} as any);
+
+    expect(typeof out).toBe('string');
+
+    const recovered = readOpenAiErrorEvent((out as string).trim());
+
+    expect(recovered?.message).toContain('rate limit exceeded');
+  });
+
   it.each(streamTransforms)(
-    '%s delivers an upstream error as an error',
+    '%s is left alone on a chunk that is not a failure',
     (provider, transform) => {
-      const guarded = guardStreamTransform(transform as Function, provider);
+      // The overcorrection guard: a wrapper that answered everything with an
+      // error frame would satisfy the table above and break every stream. Asserted
+      // as "identical to what the bare transform did", so it holds for the
+      // providers whose wire format is their own and who make nothing of an
+      // OpenAI-shaped chunk either way.
+      // Some transforms mint an id per call, so what is compared is the shape
+      // rather than the bytes.
+      const stable = (run: () => unknown) => {
+        try {
+          return (JSON.stringify(run()) ?? 'undefined')
+            .replaceAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>')
+            .replaceAll(/"created":\d+/g, '"created":<t>');
+        } catch (err) {
+          return `threw:${(err as Error).message}`;
+        }
+      };
 
-      const out = guarded(errorChunk, 'fallback-id', {}, true, {} as any);
+      const bare = stable(() => transform(contentChunk, 'fallback-id', {}, true, {} as any));
+      const guarded = stable(() =>
+        guardStreamTransform(transform as Function, provider)(
+          contentChunk,
+          'fallback-id',
+          {},
+          true,
+          {} as any,
+        ),
+      );
 
-      expect(typeof out).toBe('string');
-
-      const recovered = readOpenAiErrorEvent((out as string).trim());
-
-      expect(recovered?.message).toContain('rate limit exceeded');
+      expect(guarded).toBe(bare);
     },
   );
-
-  it.each(streamTransforms)('%s is left alone on a chunk that is not a failure', (provider, transform) => {
-    // The overcorrection guard: a wrapper that answered everything with an
-    // error frame would satisfy the table above and break every stream. Asserted
-    // as "identical to what the bare transform did", so it holds for the
-    // providers whose wire format is their own and who make nothing of an
-    // OpenAI-shaped chunk either way.
-    // Some transforms mint an id per call, so what is compared is the shape
-    // rather than the bytes.
-    const stable = (run: () => unknown) => {
-      try {
-        return (JSON.stringify(run()) ?? 'undefined')
-          .replaceAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>')
-          .replaceAll(/"created":\d+/g, '"created":<t>');
-      } catch (err) {
-        return `threw:${(err as Error).message}`;
-      }
-    };
-
-    const bare = stable(() => transform(contentChunk, 'fallback-id', {}, true, {} as any));
-    const guarded = stable(() =>
-      guardStreamTransform(transform as Function, provider)(
-        contentChunk,
-        'fallback-id',
-        {},
-        true,
-        {} as any,
-      ),
-    );
-
-    expect(guarded).toBe(bare);
-  });
 
   it('lets a transform that reads its own error frame answer for itself', () => {
     // Anthropic's maps the type and names the provider. Pre-empting a transform
     // that handles the case would replace something specific with something
     // blunter, so the transform runs first and its answer wins.
-    const specific = () => 'event: error\ndata: {"error":{"message":"anthropic error: Overloaded","type":"overloaded_error"}}\n\n';
+    const specific = () =>
+      'event: error\ndata: {"error":{"message":"anthropic error: Overloaded","type":"overloaded_error"}}\n\n';
 
     const out = guardStreamTransform(specific, 'anthropic')(errorChunk) as string;
 

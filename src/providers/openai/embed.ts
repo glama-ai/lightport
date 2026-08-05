@@ -22,4 +22,3 @@ export const OpenAIEmbedConfig: ProviderConfig = {
     param: 'user',
   },
 };
-

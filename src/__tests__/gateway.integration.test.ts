@@ -99,10 +99,16 @@ describe.skipIf(!ANTHROPIC_API_KEY)('anthropic', () => {
     const toolCalls = response.choices[0].message.tool_calls;
     expect(toolCalls).toBeDefined();
     expect(toolCalls!.length).toBeGreaterThan(0);
-    expect(toolCalls![0].type).toBe('function');
-    expect(toolCalls![0].function.name).toBe('submit');
 
-    const args = JSON.parse(toolCalls![0].function.arguments);
+    // A tool call is a function call or a custom one, and only the first has a
+    // `function` to read; narrowing here is what lets the rest be typed.
+    const toolCall = toolCalls![0];
+    expect(toolCall.type).toBe('function');
+    if (toolCall.type !== 'function') throw new Error('expected a function tool call');
+
+    expect(toolCall.function.name).toBe('submit');
+
+    const args = JSON.parse(toolCall.function.arguments);
     expect(args.answer).toBe('hello');
   }, 30_000);
 
@@ -400,7 +406,11 @@ describe.skipIf(!GOOGLE_API_KEY)('google', () => {
     const toolCalls = response.choices[0].message.tool_calls;
     expect(toolCalls).toBeDefined();
     expect(toolCalls!.length).toBeGreaterThan(0);
-    expect(toolCalls![0].function.name).toBe('submit');
+
+    const toolCall = toolCalls![0];
+    if (toolCall.type !== 'function') throw new Error('expected a function tool call');
+
+    expect(toolCall.function.name).toBe('submit');
   }, 30_000);
 });
 

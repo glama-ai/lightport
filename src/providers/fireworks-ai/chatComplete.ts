@@ -107,7 +107,6 @@ export interface FireworksAIValidationErrorResponse {
 
 export interface FireworksAIErrorResponse extends ErrorResponse {}
 
-
 export const FireworksAIErrorResponseTransform: (
   response: FireworksAIValidationErrorResponse | FireworksAIErrorResponse,
 ) => ErrorResponse = (response) => {
@@ -134,4 +133,3 @@ export const FireworksAIErrorResponseTransform: (
   }
   return generateErrorResponse(response.error, FIREWORKS_AI);
 };
-

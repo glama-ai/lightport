@@ -22,9 +22,7 @@ import { parseJson } from './parseJson';
 // `Targets` was the other thing this could return, for a config that named a
 // list of them instead of a provider. Validation refuses that config now, so
 // every caller's `as Options` was describing the only case left.
-export function constructConfigFromRequestHeaders(
-  requestHeaders: Record<string, any>,
-): Options {
+export function constructConfigFromRequestHeaders(requestHeaders: Record<string, any>): Options {
   // Each provider's headers are read only if that provider is the one being
   // asked for. A request names one provider, so building all fifteen of these up
   // front spent some eighty header lookups — every key concatenated from

@@ -10,7 +10,9 @@ const MAX_CAUSE_DEPTH = 5;
  * `.cause` independently so a chain that hits that ceiling still leaves its
  * tail somewhere in the event.
  */
-const serializeCauseChain = (error: unknown): Array<{ code?: string; message: string; name: string }> => {
+const serializeCauseChain = (
+  error: unknown,
+): Array<{ code?: string; message: string; name: string }> => {
   const chain: Array<{ code?: string; message: string; name: string }> = [];
   let cause = error instanceof Error ? error.cause : undefined;
 

@@ -537,9 +537,9 @@ export const GoogleChatCompleteResponseTransform: (
             finish_reason: toolCalls.length
               ? 'tool_calls'
               : transformFinishReason(
-              generation.finishReason as GOOGLE_GENERATE_CONTENT_FINISH_REASON,
-              strictOpenAiCompliance,
-            ),
+                  generation.finishReason as GOOGLE_GENERATE_CONTENT_FINISH_REASON,
+                  strictOpenAiCompliance,
+                ),
             logprobs,
             ...(!strictOpenAiCompliance && {
               safetyRatings: generation.safetyRatings,
@@ -746,8 +746,7 @@ export const GoogleChatCompleteStreamChunkTransform: (
         return {
           delta: message,
           index: index,
-          finish_reason:
-            finishReason && streamState.hasToolCalls ? 'tool_calls' : finishReason,
+          finish_reason: finishReason && streamState.hasToolCalls ? 'tool_calls' : finishReason,
           ...(!strictOpenAiCompliance && {
             safetyRatings: generation.safetyRatings,
           }),

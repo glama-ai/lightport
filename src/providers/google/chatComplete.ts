@@ -876,8 +876,7 @@ export const GoogleChatCompleteStreamChunkTransform: (
           return {
             delta: message,
             index: generation.index ?? index,
-            finish_reason:
-              finishReason && streamState.hasToolCalls ? 'tool_calls' : finishReason,
+            finish_reason: finishReason && streamState.hasToolCalls ? 'tool_calls' : finishReason,
             ...(!strictOpenAiCompliance && generation.groundingMetadata
               ? { groundingMetadata: generation.groundingMetadata }
               : {}),
