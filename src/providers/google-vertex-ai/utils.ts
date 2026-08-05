@@ -1011,3 +1011,88 @@ export const getThoughtSignature = (model?: string, thoughtSignature?: string) =
   if (['gemini-1.5', 'gemini-2.0', 'gemini-2.5'].some((m) => model?.includes(m))) return undefined; // older models do not require thought signature
   return 'skip_thought_signature_validator';
 };
+
+/*
+  Gemini takes the thinking effort under one of two names, and which one depends
+  on the model. The 2.5 family accepts `thinking_budget`, a number of tokens, and
+  refuses `thinkingLevel` with an error; 3 reads a level and still takes a budget
+  for compatibility. Sending both is a 400, so only one is ever returned.
+
+  A model that cannot be placed — an earlier Gemini, or one of the `latest`
+  aliases, which name no version — is given a budget rather than a level. Both
+  are guesses, but a budget is the guess Gemini 3 tolerates, where a level is the
+  one 2.5 refuses.
+*/
+const usesThinkingLevel = (model?: string) => {
+  const major = /gemini-(\d+)/.exec(model?.toLowerCase() ?? '');
+
+  return major ? Number(major[1]) >= 3 : false;
+};
+
+// Only the 2.5 Flash models can be told not to think at all. 2.5 Pro has a floor
+// of 128 tokens and Gemini 3 has no level meaning none, so neither can be sent a
+// zero — Google says as much: reasoning cannot be turned off for either.
+const canStopThinking = (model?: string) => /gemini-2\.5-flash/.test(model?.toLowerCase() ?? '');
+
+const THINKING_LEVELS = new Set(['minimal', 'low', 'medium', 'high']);
+
+const THINKING_BUDGETS: Record<string, number> = {
+  minimal: 1024,
+  low: 1024,
+  medium: 8192,
+  high: 24576,
+};
+
+const thinkingBudgetFor = (reasoningEffort: string): number | undefined => {
+  const named = reasoningEffort.toLowerCase();
+  // `hasOwn`, so that an effort naming something every object carries — a
+  // `constructor`, a `__proto__` — is read as the nonsense it is rather than as
+  // whatever that name happens to hold.
+  if (Object.hasOwn(THINKING_BUDGETS, named)) return THINKING_BUDGETS[named];
+
+  // A caller may ask for a budget in tokens rather than by name, which the
+  // effort type allows. Unnamed efforts used to fall to the medium budget, so
+  // the number asked for was replaced by a different one without a word.
+  const asTokens = Number(reasoningEffort);
+
+  return reasoningEffort.trim() !== '' && Number.isFinite(asTokens) ? asTokens : undefined;
+};
+
+const budgetConfig = (thinkingBudget: number | undefined) =>
+  thinkingBudget === undefined
+    ? {}
+    : {
+        thinking_config: {
+          include_thoughts: thinkingBudget !== 0,
+          thinking_budget: thinkingBudget,
+        },
+      };
+
+/**
+ * The thinking fields to merge into a Gemini generationConfig for a requested
+ * reasoning effort, under whichever name the model reads them by. Empty where
+ * the model has no way to say what was asked, which leaves it at its own default.
+ */
+export const transformGeminiThinkingConfig = (
+  model: string | undefined,
+  reasoningEffort: string,
+): Record<string, any> => {
+  if (reasoningEffort.toLowerCase() === 'none') {
+    // Zero is how thinking is turned off where it can be: 2.5 Flash thinks by
+    // default, so a request for none that said nothing left it at it. Where it
+    // cannot be turned off, nothing is sent rather than a zero that is refused.
+    return canStopThinking(model) ? budgetConfig(0) : {};
+  }
+
+  if (usesThinkingLevel(model)) {
+    if (THINKING_LEVELS.has(reasoningEffort.toLowerCase())) {
+      return { thinkingConfig: { includeThoughts: true, thinkingLevel: reasoningEffort } };
+    }
+
+    // Gemini 3 has no level for a number of tokens, but does still take a
+    // budget, so that is how an effort given as a number is sent.
+    return budgetConfig(thinkingBudgetFor(reasoningEffort));
+  }
+
+  return budgetConfig(thinkingBudgetFor(reasoningEffort));
+};

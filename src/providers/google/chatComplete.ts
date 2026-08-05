@@ -20,6 +20,7 @@ import {
   transformGoogleTools,
   googleTools,
   getThoughtSignature,
+  transformGeminiThinkingConfig,
 } from '../google-vertex-ai/utils';
 import {
   ChatCompletionResponse,
@@ -84,33 +85,15 @@ const transformGenerationConfig = (params: LightportGeminiParams) => {
       modality.toUpperCase(),
     );
   }
-  if (params.reasoning_effort && params.reasoning_effort !== 'none') {
-    // Gemini 2.5 models use thinking_config with thinking_budget
-    // Gemini 3.0+ models use thinkingConfig with thinkingLevel
-    const model = params.model;
-    if (model?.includes('gemini-2.5')) {
-      // Map reasoning_effort to thinking_budget for Gemini 2.5 models
-      // Using reasonable defaults based on model limits:
-      // - gemini-2.5-flash: 0-24,576 tokens
-      // - gemini-2.5-pro: 128-32,768 tokens
-      // https://ai.google.dev/gemini-api/docs/openai#thinking
-      const thinkingBudgetMap: Record<string, number> = {
-        minimal: 1024,
-        low: 1024,
-        medium: 8192,
-        high: 24576,
-      };
-      const thinkingBudget = thinkingBudgetMap[params.reasoning_effort] ?? 8192;
-      generationConfig['thinking_config'] = {
-        include_thoughts: true,
-        thinking_budget: thinkingBudget,
-      };
-    } else {
-      // Gemini 3.0+ models use thinkingLevel
-      generationConfig['thinkingConfig'] = {
-        includeThoughts: true,
-        thinkingLevel: params.reasoning_effort,
-      };
+  if (params.reasoning_effort) {
+    const thinking = transformGeminiThinkingConfig(params.model, params.reasoning_effort);
+
+    // An effort the model can act on replaces a thinking block already written
+    // above: the two are alternatives, and Gemini refuses a request carrying
+    // both. An effort it cannot act on leaves the block where it is.
+    if (Object.keys(thinking).length) {
+      delete generationConfig['thinking_config'];
+      Object.assign(generationConfig, thinking);
     }
   }
   if (params.image_config) {

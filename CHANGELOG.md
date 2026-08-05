@@ -175,6 +175,34 @@ that answered and said nothing:
     from none sent. It now takes the same placeholder opening as a conversation
     that does not begin with a human turn.
 
+- A reasoning effort sent to Gemini was named in a way the model refuses, unless
+  the model said `gemini-2.5` in so many words. Gemini takes the effort as a token
+  budget or as a level, and which one depends on the version: 2.5 answers a level
+  with an error, while 3 reads a level and still takes a budget for
+  compatibility. Only 2.5 was matched, so everything else — an earlier Gemini, or
+  one of the `latest` aliases, which name no version — was sent a level, and got
+  back a 400. A model that cannot be placed now gets a budget, that being the
+  guess Gemini 3 tolerates rather than the one 2.5 refuses.
+
+  Two more ways the effort was not what was asked for:
+
+  - `none` said nothing at all, leaving a model that reasons by default reasoning.
+    It is now a budget of zero for the 2.5 Flash models, which is how they are
+    told to stop. It remains nothing for 2.5 Pro and for Gemini 3, which Google
+    says cannot be stopped, and for anything unplaceable — a zero they refuse is
+    no better than the silence.
+  - An effort given as a number of tokens, which the parameter allows, fell to
+    the medium budget. The number asked for was replaced by another without a
+    word. Gemini 3 has no level for a number, so there it is sent as the budget
+    it still accepts.
+
+  A request carrying both a thinking block and an effort wrote each under its own
+  name, leaving two thinking configs where Gemini refuses more than one. An
+  effort the model can act on now replaces the block; one it cannot leaves the
+  block where it is. The mapping itself was written out twice, once for Google
+  and once for Vertex, and is now written once so the two cannot drift apart —
+  though the generation config around it is still two copies.
+
 - A failed text completion reached the caller as the provider had written it.
   The shared transform for that endpoint built the named and reshaped error and
   then dropped it, where the one for chat returns it, so the same failure read
