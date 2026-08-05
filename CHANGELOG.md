@@ -26,9 +26,9 @@ such a config named no provider and the request already failed — on
 fails at validation with a 400 that says why. Handle failover and load balancing
 in the caller.
 
-`retry` and `cache` are **not** refused. They are not implemented either, and a
-request carrying them is served with a warning in the log. Nothing that worked
-before stops working.
+`retry` and `cache` are **not** refused, and neither are the hooks and
+guardrails. None of them is implemented, and a request carrying any is served
+with a warning in the log naming which. Nothing that worked before stops working.
 
 ### Added
 
@@ -219,6 +219,22 @@ that answered and said nothing:
   and once for Vertex, and is now written once so the two cannot drift apart —
   though the generation config around it is still two copies.
 
+- Hooks and guardrails were accepted in silence. `before_request_hooks`,
+  `after_request_hooks`, `input_guardrails` and `output_guardrails` were
+  validated and counted as enough to make a config valid on their own, and
+  `default_input_guardrails` and `default_output_guardrails` were overwritten by
+  the headers of the same name before anything could read them — and then all of
+  it was dropped without a word, none of it being implemented. Someone who sets
+  `output_guardrails` believes what the model says is being screened before it
+  reaches anyone, and nothing about the answer they got back said otherwise. They
+  are named in the same warning `retry` and `cache` already got, along with the
+  `x-lightport-default-input-guardrails`, `x-lightport-default-output-guardrails`,
+  `x-lightport-cache` and `x-lightport-retry-count` headers, which are read
+  whether or not a config was sent and were saying nothing at all.
+- A guardrail header that was not JSON failed the request as the gateway's own
+  fault. It is read as JSON well past the point anything catches, so a malformed
+  one raised a 500 and paged, for a header naming something nothing acts on. It
+  is answered as the caller's mistake now, the way a malformed config always was.
 - A default model one provider named was sent by all of them. The shared
   OpenAI-compatible base copies its parameters one level deep, so each was still
   the very object OpenAI's own config holds, and writing a default into it wrote

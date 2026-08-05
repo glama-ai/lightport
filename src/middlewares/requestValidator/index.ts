@@ -33,9 +33,13 @@ const UNROUTABLE_CONFIG = ['strategy', 'targets'] as const;
 /**
  * Config that is read, validated, converted to camelCase and then dropped.
  *
- * There is no retry loop and no response cache. An operator who sets `retry`
- * believes they have retries, and finds out during the incident the setting was
- * for — which is worth saying, loudly and in the log they will read afterwards.
+ * There is no retry loop, no response cache, and nothing runs a hook or a
+ * guardrail. An operator who sets `retry` believes they have retries, and finds
+ * out during the incident the setting was for — which is worth saying, loudly
+ * and in the log they will read afterwards. The guardrails are the same thing
+ * and worse: someone who sets `output_guardrails` believes what the model says
+ * is being screened before it reaches anyone, and nothing about the answer they
+ * get back says otherwise.
  *
  * Said rather than enforced, because these requests succeed today. Refusing them
  * would trade a setting that quietly does nothing for a gateway that serves
@@ -48,7 +52,41 @@ const UNROUTABLE_CONFIG = ['strategy', 'targets'] as const;
  * decorate a config rather than promise anything: standalone, with no strategy
  * to weigh and no fallback to trigger, `weight: 1` misleads nobody.
  */
-const IGNORED_CONFIG = ['retry', 'cache'] as const;
+const IGNORED_CONFIG = [
+  'retry',
+  'cache',
+  'before_request_hooks',
+  'after_request_hooks',
+  'input_guardrails',
+  'output_guardrails',
+  // Named in a config, these are overwritten by the headers below before anyone
+  // could read them — so they are dropped a step earlier than the rest, and just
+  // as quietly.
+  'default_input_guardrails',
+  'default_output_guardrails',
+] as const;
+
+/**
+ * Settings that arrive as headers of their own rather than inside the config.
+ * They are read whether or not a config was sent, so a caller naming only these
+ * would otherwise be told nothing at all — and the two guardrail headers are the
+ * ones an operator is most likely to reach for, being how the defaults are set.
+ */
+const IGNORED_JSON_HEADERS = [
+  `x-${POWERED_BY}-default-input-guardrails`,
+  `x-${POWERED_BY}-default-output-guardrails`,
+] as const;
+
+const IGNORED_HEADERS = [...IGNORED_JSON_HEADERS, HEADER_KEYS.CACHE, HEADER_KEYS.RETRIES] as const;
+
+const warnIgnored = (ignored: string[]) => {
+  if (ignored.length === 0) return;
+
+  logger.warn(
+    { ignored },
+    'request names behaviour this gateway does not implement and will not act on',
+  );
+};
 
 const truncate = (message: string): string =>
   message.length > MAX_MESSAGE_LENGTH ? `${message.slice(0, MAX_MESSAGE_LENGTH)}…` : message;
@@ -97,6 +135,23 @@ export const requestValidator = (c: GatewayContext): Response | null => {
     );
   }
 
+  warnIgnored(IGNORED_HEADERS.filter((header) => requestHeaders[header] !== undefined));
+
+  // Read as JSON further on, outside any catch, so one that is not JSON became a
+  // 500 and a page — for a header naming something the gateway does not act on
+  // at all. Answered here as the caller's mistake, the way a malformed config is.
+  for (const header of IGNORED_JSON_HEADERS) {
+    const value = requestHeaders[header];
+
+    if (value === undefined) continue;
+
+    try {
+      parseJson(value);
+    } catch {
+      return invalidRequest(`Invalid ${header} passed. You need to pass a valid json`);
+    }
+  }
+
   if (requestHeaders[`x-${POWERED_BY}-config`]) {
     try {
       const parsedConfig = parseJson<Record<string, any>>(requestHeaders[`x-${POWERED_BY}-config`]);
@@ -116,14 +171,7 @@ export const requestValidator = (c: GatewayContext): Response | null => {
         );
       }
 
-      const ignored = IGNORED_CONFIG.filter((key) => parsedConfig[key] !== undefined);
-
-      if (ignored.length > 0) {
-        logger.warn(
-          { ignored },
-          'config names behaviour this gateway does not implement and will not act on',
-        );
-      }
+      warnIgnored(IGNORED_CONFIG.filter((key) => parsedConfig[key] !== undefined));
 
       // `targets` is refused above, so a config that reaches here and names no
       // provider has none to be found anywhere.

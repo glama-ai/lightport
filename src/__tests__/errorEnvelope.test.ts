@@ -1,5 +1,6 @@
 import createApp from '../index';
-import { afterEach, describe, expect, it } from 'vitest';
+import { logger } from '../logger';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const apps: Array<ReturnType<typeof createApp>> = [];
 
@@ -159,6 +160,17 @@ describe('errors the gateway raises itself', () => {
     ['weight', { provider: 'openai', api_key: 'k', weight: 1 }],
     ['on_status_codes', { provider: 'openai', api_key: 'k', on_status_codes: [429] }],
     ['retry alone, provider from the header', { retry: { attempts: 3 } }],
+    ['input_guardrails', { provider: 'openai', api_key: 'k', input_guardrails: [{ id: 'g' }] }],
+    ['output_guardrails', { provider: 'openai', api_key: 'k', output_guardrails: [{ id: 'g' }] }],
+    [
+      'before_request_hooks',
+      { provider: 'openai', api_key: 'k', before_request_hooks: [{ type: 'guardrail' }] },
+    ],
+    [
+      'after_request_hooks',
+      { provider: 'openai', api_key: 'k', after_request_hooks: [{ type: 'guardrail' }] },
+    ],
+    ['guardrails alone, provider from the header', { input_guardrails: [{ id: 'g' }] }],
   ])('serves config it does not act on, and says so in the log: %s', async (_name, config) => {
     // Nothing here is honoured, and the warning is where that is said. Refusing
     // instead would answer a setting that quietly does nothing with a gateway
@@ -173,6 +185,89 @@ describe('errors the gateway raises itself', () => {
 
     expect(status).not.toBe(400);
   });
+
+  it.each([
+    [
+      'named in the config',
+      {
+        'x-lightport-config': JSON.stringify({
+          provider: 'openai',
+          api_key: 'k',
+          retry: { attempts: 3 },
+          input_guardrails: [{ id: 'g' }],
+          after_request_hooks: [{ type: 'guardrail' }],
+        }),
+      },
+      ['retry', 'input_guardrails', 'after_request_hooks'],
+    ],
+    [
+      'named as headers of their own',
+      {
+        'x-lightport-default-input-guardrails': JSON.stringify([{ id: 'g' }]),
+        'x-lightport-default-output-guardrails': JSON.stringify([{ id: 'g' }]),
+      },
+      ['x-lightport-default-input-guardrails', 'x-lightport-default-output-guardrails'],
+    ],
+    [
+      'named as the header forms of the config keys',
+      { 'x-lightport-cache': 'simple', 'x-lightport-retry-count': '3' },
+      ['x-lightport-cache', 'x-lightport-retry-count'],
+    ],
+    [
+      'named as the config defaults the headers overwrite',
+      {
+        'x-lightport-config': JSON.stringify({
+          provider: 'openai',
+          api_key: 'k',
+          default_output_guardrails: [{ id: 'g' }],
+        }),
+      },
+      ['default_output_guardrails'],
+    ],
+  ])('says in the log which settings it will not act on: %s', async (_name, headers, expected) => {
+    // The warning is the whole of what is done about these, so it is the whole
+    // of what there is to test. Someone who set `output_guardrails` believes
+    // what the model says is being screened; the log is the only place that says
+    // it is not — and the guardrail headers are read whether or not a config was
+    // sent, so a caller naming only those would otherwise be told nothing.
+    const warnings: unknown[] = [];
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(((obj: any) => {
+      warnings.push(obj);
+      return logger;
+    }) as any);
+
+    await post('/v1/chat/completions', {
+      authorization: 'Bearer sk-not-a-real-key',
+      'x-lightport-provider': 'openai',
+      ...headers,
+    });
+
+    warn.mockRestore();
+
+    const ignored = warnings.flatMap((entry: any) => entry?.ignored ?? []);
+    for (const key of expected) {
+      expect(ignored).toContain(key);
+    }
+  });
+
+  it.each(['x-lightport-default-input-guardrails', 'x-lightport-default-output-guardrails'])(
+    'answers a malformed %s as the caller`s mistake',
+    async (header) => {
+      // Read as JSON further on, outside any catch, so one that is not JSON left
+      // as a 500 and a page — for a header naming something nothing acts on. A
+      // malformed config has always been answered as a 400; this now matches.
+      const { body, status } = await post('/v1/chat/completions', {
+        authorization: 'Bearer sk-not-a-real-key',
+        'x-lightport-provider': 'openai',
+        [header]: 'not-json',
+      });
+
+      expect(status).toBe(400);
+      expect(body.error).toMatchObject({ type: 'invalid_request_error' });
+      expect(body.error.message).toContain(header);
+      expect(body.error.message).toContain('valid json');
+    },
+  );
 
   it('names the keys it is refusing', async () => {
     // A fallback config used to die on `Provider "" is not supported` — naming a

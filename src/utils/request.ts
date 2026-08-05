@@ -188,11 +188,11 @@ export function constructConfigFromRequestHeaders(requestHeaders: Record<string,
 
   // Read by both paths below whatever the provider, so nothing is deferred here.
   const defaultsConfig = {
-    input_guardrails: requestHeaders[`x-lightport-default-input-guardrails`]
-      ? parseJson<any[]>(requestHeaders[`x-lightport-default-input-guardrails`])
+    input_guardrails: requestHeaders[`x-${POWERED_BY}-default-input-guardrails`]
+      ? parseJson<any[]>(requestHeaders[`x-${POWERED_BY}-default-input-guardrails`])
       : [],
-    output_guardrails: requestHeaders[`x-lightport-default-output-guardrails`]
-      ? parseJson<any[]>(requestHeaders[`x-lightport-default-output-guardrails`])
+    output_guardrails: requestHeaders[`x-${POWERED_BY}-default-output-guardrails`]
+      ? parseJson<any[]>(requestHeaders[`x-${POWERED_BY}-default-output-guardrails`])
       : [],
   };
 
