@@ -122,7 +122,7 @@ export const SYSTEM_INSTRUCTION_DISABLED_MODELS = [
   'gemini-pro-vision',
 ];
 
-export type GoogleMessageRole = 'user' | 'model' | 'system' | 'function';
+export type GoogleMessageRole = 'user' | 'model' | 'system';
 
 interface GoogleFunctionCallMessagePart {
   functionCall: GoogleGenerateFunctionCall;
@@ -162,12 +162,22 @@ export interface GoogleToolConfig {
   };
 }
 
+// A tool result reaches the gateway either as OpenAI's current 'tool' role or as
+// its deprecated 'function' role. Both carry a tool's output, and the tool name
+// where the client supplies it, and both become a Gemini functionResponse part.
+export const TOOL_RESULT_ROLES: OpenAIMessageRole[] = ['tool', 'function'];
+
 export const transformOpenAIRoleToGoogleRole = (role: OpenAIMessageRole): GoogleMessageRole => {
   switch (role) {
     case 'assistant':
       return 'model';
+    // Gemini only documents 'user' and 'model' as content roles. 'function' was
+    // long accepted for a functionResponse turn, but newer serving stacks reject
+    // it outright with "Role 'function' is not supported", so a tool result is
+    // sent as a 'user' turn. The functionResponse part carries the semantics.
     case 'tool':
-      return 'function';
+    case 'function':
+      return 'user';
     case 'developer':
       return 'system';
     default:
@@ -208,6 +218,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
       default: '',
       transform: (params: Params) => {
         let lastRole: GoogleMessageRole | undefined;
+        let lastWasToolResult = false;
         const messages: GoogleMessage[] = [];
 
         params.messages?.forEach((message: Message) => {
@@ -220,6 +231,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
             return;
 
           const role = transformOpenAIRoleToGoogleRole(message.role);
+          const isToolResult = TOOL_RESULT_ROLES.includes(message.role);
           let parts = [];
 
           if (message.role === 'assistant' && message.tool_calls) {
@@ -238,7 +250,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
                 }),
               });
             });
-          } else if (message.role === 'tool') {
+          } else if (isToolResult) {
             const toolName = message.name ?? 'gateway-tool-filler-name';
             // OpenAI: tool message content is string or array of text parts (type "text").
             if (typeof message.content === 'string') {
@@ -324,7 +336,15 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
 
           // @NOTE: This takes care of the "Please ensure that multiturn requests alternate between user and model."
           // error that occurs when we have multiple user messages in a row.
-          const shouldCombineMessages = lastRole === role && !params.model?.includes('vision');
+          // A tool result is never combined with an ordinary user message, even
+          // though both now carry the 'user' role: a functionResponse part
+          // followed by a text part in one content makes Gemini answer with an
+          // empty candidate. Consecutive tool results still combine, which is
+          // what parallel tool calls need.
+          const shouldCombineMessages =
+            lastRole === role &&
+            lastWasToolResult === isToolResult &&
+            !params.model?.includes('vision');
 
           if (shouldCombineMessages) {
             messages[messages.length - 1].parts.push(...parts);
@@ -333,6 +353,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
           }
 
           lastRole = role;
+          lastWasToolResult = isToolResult;
         });
         return messages;
       },

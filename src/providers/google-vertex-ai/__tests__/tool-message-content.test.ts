@@ -37,7 +37,7 @@ describe('Google Vertex AI tool message content (OpenAI format)', () => {
 
     const transformed = transformUsingProviderConfig(VertexGoogleChatCompleteConfig, params);
     const toolContent = transformed.contents.find(
-      (c: any) => c.role === 'function' && c.parts?.some((p: any) => p.functionResponse),
+      (c: any) => c.role === 'user' && c.parts?.some((p: any) => p.functionResponse),
     );
 
     expect(toolContent).toBeDefined();
@@ -77,7 +77,7 @@ describe('Google Vertex AI tool message content (OpenAI format)', () => {
 
     const transformed = transformUsingProviderConfig(VertexGoogleChatCompleteConfig, params);
     const toolContent = transformed.contents.find(
-      (c: any) => c.role === 'function' && c.parts?.some((p: any) => p.functionResponse),
+      (c: any) => c.role === 'user' && c.parts?.some((p: any) => p.functionResponse),
     );
 
     expect(toolContent).toBeDefined();
@@ -124,12 +124,174 @@ describe('Google Vertex AI tool message content (OpenAI format)', () => {
 
     const transformed = transformUsingProviderConfig(VertexGoogleChatCompleteConfig, params);
     const toolContent = transformed.contents.find(
-      (c: any) => c.role === 'function' && c.parts?.some((p: any) => p.functionResponse),
+      (c: any) => c.role === 'user' && c.parts?.some((p: any) => p.functionResponse),
     );
 
     expect(toolContent).toBeDefined();
     const functionResponseParts = toolContent.parts.filter((p: any) => p.functionResponse);
     expect(functionResponseParts.length).toBeGreaterThanOrEqual(1);
     expect(functionResponseParts[0].functionResponse.response.content).toBe('Only this text');
+  });
+});
+
+// Gemini rejects a content role outside its documented set with
+// "Role 'function' is not supported", which fails the turn right after any tool
+// call completes.
+describe('Google Vertex AI two-turn tool flow content roles', () => {
+  const ACCEPTED_ROLES = ['user', 'model'];
+
+  it('should send the assistant tool call as model and the tool result as an accepted role', () => {
+    const params = {
+      model: 'gemini-2.5-flash',
+      messages: [
+        { role: 'user', content: 'What is the weather in San Francisco?' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_example',
+              type: 'function',
+              function: {
+                name: 'get_weather',
+                arguments: '{"location":"San Francisco"}',
+              },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          name: 'get_weather',
+          tool_call_id: 'call_example',
+          content: '72F and sunny',
+        },
+      ],
+      tools: [{ type: 'function', function: { name: 'get_weather', parameters: {} } }],
+    } as Params;
+
+    const transformed = transformUsingProviderConfig(VertexGoogleChatCompleteConfig, params);
+
+    expect(transformed.contents).toHaveLength(3);
+    expect(transformed.contents[0].role).toBe('user');
+
+    expect(transformed.contents[1].role).toBe('model');
+    expect(transformed.contents[1].parts[0].functionCall).toEqual({
+      name: 'get_weather',
+      args: { location: 'San Francisco' },
+    });
+
+    expect(transformed.contents[2].parts[0].functionResponse).toEqual({
+      name: 'get_weather',
+      response: { content: '72F and sunny' },
+    });
+
+    for (const content of transformed.contents) {
+      expect(ACCEPTED_ROLES).toContain(content.role);
+    }
+  });
+
+  it('should merge parallel tool results into a single accepted-role content', () => {
+    const params = {
+      model: 'gemini-2.5-flash',
+      messages: [
+        { role: 'user', content: 'Weather in both cities?' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{"location":"SF"}' },
+            },
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{"location":"NYC"}' },
+            },
+          ],
+        },
+        { role: 'tool', name: 'get_weather', tool_call_id: 'call_1', content: '72F' },
+        { role: 'tool', name: 'get_weather', tool_call_id: 'call_2', content: '58F' },
+      ],
+      tools: [{ type: 'function', function: { name: 'get_weather', parameters: {} } }],
+    } as Params;
+
+    const transformed = transformUsingProviderConfig(VertexGoogleChatCompleteConfig, params);
+
+    expect(transformed.contents).toHaveLength(3);
+    expect(transformed.contents[1].parts).toHaveLength(2);
+    expect(transformed.contents[2].parts).toHaveLength(2);
+    expect(
+      transformed.contents[2].parts.map((p: any) => p.functionResponse.response.content),
+    ).toEqual(['72F', '58F']);
+
+    for (const content of transformed.contents) {
+      expect(ACCEPTED_ROLES).toContain(content.role);
+    }
+  });
+
+  it('should keep the turns alternating when a user message follows a tool result', () => {
+    const params = {
+      model: 'gemini-2.5-flash',
+      messages: [
+        { role: 'user', content: 'Weather?' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{}' },
+            },
+          ],
+        },
+        { role: 'tool', name: 'get_weather', tool_call_id: 'call_1', content: '72F' },
+        { role: 'user', content: 'And tomorrow?' },
+      ],
+      tools: [{ type: 'function', function: { name: 'get_weather', parameters: {} } }],
+    } as Params;
+
+    const transformed = transformUsingProviderConfig(VertexGoogleChatCompleteConfig, params);
+
+    // Gemini answers a content holding a functionResponse part followed by a
+    // text part with an empty candidate, so the follow-up question stays in a
+    // content of its own rather than being combined into the tool result.
+    expect(transformed.contents.map((c: any) => c.role)).toEqual(['user', 'model', 'user', 'user']);
+    expect(transformed.contents[2].parts).toHaveLength(1);
+    expect(transformed.contents[2].parts[0].functionResponse).toBeDefined();
+    expect(transformed.contents[3].parts).toHaveLength(1);
+    expect(transformed.contents[3].parts[0].text).toBe('And tomorrow?');
+  });
+
+  it('should transform the deprecated function role into a functionResponse turn', () => {
+    const params = {
+      model: 'gemini-2.5-flash',
+      messages: [
+        { role: 'user', content: 'Weather?' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{}' },
+            },
+          ],
+        },
+        { role: 'function', name: 'get_weather', content: '72F' },
+      ],
+      tools: [{ type: 'function', function: { name: 'get_weather', parameters: {} } }],
+    } as Params;
+
+    const transformed = transformUsingProviderConfig(VertexGoogleChatCompleteConfig, params);
+
+    expect(transformed.contents).toHaveLength(3);
+    expect(transformed.contents[2].parts[0].functionResponse).toEqual({
+      name: 'get_weather',
+      response: { content: '72F' },
+    });
+
+    for (const content of transformed.contents) {
+      expect(ACCEPTED_ROLES).toContain(content.role);
+    }
   });
 });

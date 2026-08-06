@@ -19,6 +19,7 @@ import {
   GoogleMessageRole,
   GoogleToolConfig,
   SYSTEM_INSTRUCTION_DISABLED_MODELS,
+  TOOL_RESULT_ROLES,
   transformOpenAIRoleToGoogleRole,
   transformToolChoiceForGemini,
 } from '../google/chatComplete';
@@ -60,6 +61,7 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
       default: '',
       transform: (params: Params) => {
         let lastRole: GoogleMessageRole | undefined;
+        let lastWasToolResult = false;
         const messages: GoogleMessage[] = [];
 
         params.messages?.forEach((message: Message) => {
@@ -72,6 +74,7 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
             return;
 
           const role = transformOpenAIRoleToGoogleRole(message.role);
+          const isToolResult = TOOL_RESULT_ROLES.includes(message.role);
           let parts = [];
 
           if (message.role === 'assistant' && message.tool_calls) {
@@ -90,7 +93,7 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
                 }),
               });
             });
-          } else if (message.role === 'tool') {
+          } else if (isToolResult) {
             const toolName = message.name ?? 'gateway-tool-filler-name';
             // OpenAI: tool message content is string or array of text parts (type "text").
             if (typeof message.content === 'string') {
@@ -183,7 +186,15 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
 
           // @NOTE: This takes care of the "Please ensure that multiturn requests alternate between user and model."
           // error that occurs when we have multiple user messages in a row.
-          const shouldCombineMessages = lastRole === role && !params.model?.includes('vision');
+          // A tool result is never combined with an ordinary user message, even
+          // though both now carry the 'user' role: a functionResponse part
+          // followed by a text part in one content makes Gemini answer with an
+          // empty candidate. Consecutive tool results still combine, which is
+          // what parallel tool calls need.
+          const shouldCombineMessages =
+            lastRole === role &&
+            lastWasToolResult === isToolResult &&
+            !params.model?.includes('vision');
 
           if (shouldCombineMessages) {
             messages[messages.length - 1].parts.push(...parts);
@@ -192,6 +203,7 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
           }
 
           lastRole = role;
+          lastWasToolResult = isToolResult;
         });
 
         return messages;
