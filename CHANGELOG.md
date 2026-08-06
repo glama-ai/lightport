@@ -335,6 +335,36 @@ that answered and said nothing:
   now the day it was made on. Nothing else changes: the name is no part of what
   the credentials are cached under, and STS took the old one as readily as the
   new.
+- A file uploaded in more than one read arrived at the provider as something
+  else. `indexOf` reports "not here" with -1, which is a number and so survives
+  `??`: it was taken for a position and used as one. A body that arrived whole
+  was fine, which is every body small enough to be read in one go — and why this
+  held. Fed one representative body at every point it could be split in two, 203
+  of 615 splits lost rows and 76 lost the closing delimiter; none lose rows now,
+  and 7 still lose the delimiter for a reason given below.
+
+  - The headers of a part were read before the blank line closing them had
+    arrived, from the wrong place, and the part was then treated as though they
+    had been read in full. Nothing of the file survived that — a plain body in
+    16-byte reads produced no output at all. A part whose headers have not all
+    arrived now waits for the read that completes them. This is the greater part
+    of the repair.
+  - Content was cut at -1. On the path a file takes this cost it its last byte,
+    which the row it belonged to then failed to parse and held back, so little
+    showed. On the path a skipped field takes, the buffer was replaced by that
+    one byte and the rest dropped — including the opening of the boundary that
+    ended the field, which then went unrecognised and carried the file away with
+    it.
+  - A boundary beginning in one read and ending in the next was sent on as
+    content. The tail is now held back until there is enough to tell. As above,
+    what this rescues is the skipped-field path rather than the file itself.
+
+  What remains: a boundary sitting flush against the end of a read is still read
+  as the closing one, so 7 of those 615 splits end without the closing delimiter.
+  That is older than this change and unaltered by it — the root of it is that a
+  parsed row is consumed as though always newline-terminated, which is also why
+  the sibling transformer that reads batch output can repeat a row.
+
 - A failed text completion reached the caller as the provider had written it.
   The shared transform for that endpoint built the named and reshaped error and
   then dropped it, where the one for chat returns it, so the same failure read

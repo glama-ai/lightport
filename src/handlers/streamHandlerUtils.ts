@@ -139,7 +139,23 @@ export const getFormdataToFormdataStreamTransformer = (
       while (buffer.length > 0) {
         if (isParsingHeaders) {
           const headersEndIndex = buffer.indexOf('\r\n\r\n');
+
+          // The headers are only all here once the blank line closing them is.
+          // Read before that, `indexOf` answered -1 and was used as a position
+          // regardless: the headers were taken from the wrong place, three bytes
+          // were dropped off the front of what followed, and the part was
+          // treated as though its headers had been read. Nothing of the file
+          // survived that. A part whose headers have not arrived is left in the
+          // buffer for the read that completes them.
+          if (headersEndIndex === -1) break;
+
+          // Headers are only read once the buffer begins with a boundary, so
+          // this is never the -1 the other two were. Guarding it anyway made a
+          // body that does not begin with one worse rather than better: the
+          // preamble was read as a part of its own and announced as one, where
+          // the arithmetic below merely yields an empty slice that is discarded.
           const boundaryEndIndex = buffer.indexOf(boundary) + boundary.length + 2;
+
           currentHeaders += buffer.slice(boundaryEndIndex, headersEndIndex);
           isFileContent = currentHeaders.includes('Content-Disposition: form-data; name="file"');
           // this will be specific to provider supported fields
@@ -156,7 +172,18 @@ export const getFormdataToFormdataStreamTransformer = (
 
         const boundaryIndex = buffer.indexOf(boundary);
 
-        const safeLength = boundaryIndex ?? buffer.length;
+        // `indexOf` says "not here" with -1, which is a number and so survives
+        // `??` — the fallback below it never ran. A chunk arriving before its
+        // closing boundary, which is every chunk of a file large enough to span
+        // more than one read, was then cut at -1: the content went on without
+        // its last byte, and the buffer was replaced by that byte alone,
+        // dropping the rest. The file came out wrong with nothing said.
+        //
+        // With no boundary in sight the tail is held back rather than sent on,
+        // since a boundary split across two reads begins in this one and would
+        // otherwise go out as part of the file and never be recognised.
+        const safeLength =
+          boundaryIndex === -1 ? Math.max(0, buffer.length - (boundary.length - 1)) : boundaryIndex;
 
         const content = buffer.slice(0, safeLength);
         if (isFileContent) {
