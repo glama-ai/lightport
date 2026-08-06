@@ -93,6 +93,12 @@ const PROVIDERS: ProviderEntry[] = [
     env: { SAMBANOVA_API_KEY: '' },
   },
   {
+    provider: 'saladcloud',
+    model: 'qwen3.6-35b-a3b',
+    responsesModel: 'qwen3.6-35b-a3b',
+    env: { SALAD_CLOUD_API_KEY: '' },
+  },
+  {
     provider: 'x-ai',
     model: 'grok-3-mini-fast',
     env: { XAI_API_KEY: '' },

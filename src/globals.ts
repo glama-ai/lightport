@@ -77,6 +77,7 @@ export const SILICONFLOW: string = 'siliconflow';
 export const CEREBRAS: string = 'cerebras';
 export const INFERENCENET: string = 'inference-net';
 export const SAMBANOVA: string = 'sambanova';
+export const SALADCLOUD: string = 'saladcloud';
 export const LEMONFOX_AI: string = 'lemonfox-ai';
 export const UPSTAGE: string = 'upstage';
 export const LAMBDA: string = 'lambda';
@@ -150,6 +151,7 @@ export const VALID_PROVIDERS = [
   CEREBRAS,
   INFERENCENET,
   SAMBANOVA,
+  SALADCLOUD,
   LEMONFOX_AI,
   UPSTAGE,
   LAMBDA,

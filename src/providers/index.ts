@@ -61,6 +61,7 @@ import RekaAIConfig from './reka-ai';
 import ReplicateConfig from './replicate';
 import RequestyConfig from './requesty';
 import SagemakerConfig from './sagemaker';
+import SaladCloudConfig from './saladcloud';
 import SambaNovaConfig from './sambanova';
 import SegmindConfig from './segmind';
 import SiliconFlowConfig from './siliconflow';
@@ -126,6 +127,7 @@ const Providers: { [key: string]: ProviderConfigs } = {
   'x-ai': XAIConfig,
   qdrant: QdrantConfig,
   sagemaker: SagemakerConfig,
+  saladcloud: SaladCloudConfig,
   nebius: NebiusConfig,
   'recraft-ai': RecraftAIConfig,
   milvus: MilvusConfig,
