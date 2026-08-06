@@ -2,6 +2,7 @@ import { getClientAbortSignal } from '../context/clientAbort';
 import { GatewayError } from '../errors/GatewayError';
 import { openAiErrorResponse } from '../errors/openAiError';
 import { HEADER_KEYS, POWERED_BY, RESPONSE_HEADER_KEYS, CONTENT_TYPES } from '../globals';
+import { isValidCustomHost } from '../middlewares/requestValidator/schema/config';
 import { describeRequest, measureStage, recordStage } from '../observability/requestTiming';
 import Providers from '../providers';
 import { ProviderAPIConfig, endpointStrings } from '../providers/types';
@@ -38,7 +39,9 @@ function constructRequest(
   const forwardHeadersMap: Record<string, string> = {};
 
   forwardHeaders.forEach((h: string) => {
-    const lowerCaseHeaderKey = h.toLowerCase();
+    // Coerced for the same reason the check on the way in coerces: the config's
+    // camelCase spelling is not seen by the schema that requires strings here.
+    const lowerCaseHeaderKey = String(h).toLowerCase();
     if (requestHeaders[lowerCaseHeaderKey])
       forwardHeadersMap[lowerCaseHeaderKey] = requestHeaders[lowerCaseHeaderKey];
   });
@@ -164,10 +167,32 @@ async function postToProvider(
   }
   const apiConfig: ProviderAPIConfig = providerConfig.api;
 
-  const forwardHeaders =
+  // Checked here rather than only during validation, because this is where every
+  // spelling converges. Validation reads the config's snake_case keys, but the
+  // config is converted to camelCase before it becomes `providerOption` — so a
+  // config naming `forwardHeaders` instead of `forward_headers` was never seen
+  // by the check below, and went around it.
+  const forwardHeadersGiven =
     requestHeaders[HEADER_KEYS.FORWARD_HEADERS]?.split(',').map((h) => h.trim()) ||
     providerOption.forwardHeaders ||
     [];
+
+  if (!Array.isArray(forwardHeadersGiven)) {
+    throw new GatewayError('forward_headers must be an array of header names', 400);
+  }
+
+  const forwardHeaders = forwardHeadersGiven;
+
+  if (
+    forwardHeaders.some(
+      (h: string) => String(h).trim().toLowerCase() === HEADER_KEYS.FORWARD_HEADERS,
+    )
+  ) {
+    throw new GatewayError(
+      `forward_headers must not contain the '${HEADER_KEYS.FORWARD_HEADERS}' header`,
+      400,
+    );
+  }
 
   const customHost = requestHeaders[HEADER_KEYS.CUSTOM_HOST] || providerOption.customHost || '';
   const baseUrl =
@@ -179,6 +204,25 @@ async function postToProvider(
       gatewayRequestURL: c.req.url,
       params: params,
     }));
+
+  /*
+    The address the request is about to be sent to, whatever named it.
+
+    `custom_host` is not the only setting a caller can put a host in: a provider
+    builds its own base URL from the options too, and several return one the
+    caller supplied outright — `huggingface_base_url` and `azure_foundry_url` are
+    both handed back verbatim — while others interpolate an option into a
+    hostname. Checking `customHost` alone left every one of those free to name a
+    private address, so the check belongs on the resolved URL, after the provider
+    has had its say and before anything is sent.
+
+    An empty base URL is left alone. Six providers return one when no custom host
+    is given, and refusing it here would answer "invalid custom host" to a request
+    whose problem is that it named no host at all.
+  */
+  if (baseUrl && !isValidCustomHost(baseUrl, c)) {
+    throw new GatewayError('Invalid custom host', 400);
+  }
   const endpoint = apiConfig.getEndpoint({
     c,
     providerOptions: providerOption,
