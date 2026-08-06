@@ -44,6 +44,62 @@ const enqueueFieldValueAndUpdateBuffer = (
 };
 
 /**
+ * Sends on every whole row in `text` and answers with how much of it was read.
+ *
+ * A row is whole once its newline has arrived; anything after the last newline
+ * is the beginning of a row still being read, and is left where it is.
+ *
+ * Rows used to be counted off a split of the text while the buffer was advanced
+ * by each row's own length. That went wrong two ways. A row whose newline was
+ * preceded by a carriage return was one byte longer than it was counted, so the
+ * carriage return went with it — and where that carriage return was the one
+ * before a form's closing delimiter, the delimiter was never recognised and the
+ * body went out with nothing to close it. Separately, a row that did not parse
+ * left the buffer where it was while the rows after it were counted regardless,
+ * so from there the two disagreed: bytes were cut from the wrong place, and a
+ * row could be read a second time — in the batch output of a whole file,
+ * arriving as one.
+ *
+ * A row that does not parse is read past rather than held. It is already whole,
+ * so no later byte will make it parse; holding it would offer it up again on
+ * every read that followed, and here, where the next row is looked for from
+ * where the last one ended, would leave this looking for the same newline
+ * without end.
+ *
+ * The count answers for `text`, and the multipart caller slices its own buffer
+ * by it — which is sound only because the text it passes is that buffer's own
+ * leading bytes.
+ */
+const enqueueCompleteRows = (
+  text: string,
+  controller: TransformStreamDefaultController,
+  rowTransform: (row: Record<string, any>) => Record<string, any>,
+): number => {
+  const encoder = new TextEncoder();
+  let read = 0;
+
+  for (;;) {
+    const newline = text.indexOf('\n', read);
+    if (newline === -1) break;
+
+    const row = text.slice(read, newline);
+    read = newline + 1;
+
+    if (row.trim() === '') continue;
+
+    try {
+      const json = parseJson<Record<string, any>>(row);
+      controller.enqueue(encoder.encode(JSON.stringify(rowTransform(json))));
+      controller.enqueue(encoder.encode('\r\n'));
+    } catch (error) {
+      captureException({ error, message: 'failed to parse JSON line in stream transform' });
+    }
+  }
+
+  return read;
+};
+
+/**
  * Enqueues the file content and updates the buffer for each jsonl row in the multipart/form-data body.
  * @param chunk - The current chunk of the multipart/form-data body.
  * @param controller - The controller for the TransformStream.
@@ -57,24 +113,7 @@ const enqueueFileContentAndUpdateBuffer = (
   buffer: string,
   rowTransform: (row: Record<string, any>) => Record<string, any>,
 ) => {
-  const jsonLines = chunk.split('\n');
-  for (const line of jsonLines) {
-    if (line === '\r') {
-      buffer = buffer.slice(line.length + 1);
-      continue;
-    }
-    try {
-      const json = parseJson<Record<string, any>>(line);
-      const transformedLine = rowTransform(json);
-      controller.enqueue(new TextEncoder().encode(JSON.stringify(transformedLine)));
-      controller.enqueue(new TextEncoder().encode('\r\n'));
-      buffer = buffer.slice(line.length + 1);
-    } catch (error) {
-      captureException({ error, message: 'failed to parse JSON line in stream transform' });
-      // this is not a valid json line, so we don't update the buffer
-    }
-  }
-  return buffer;
+  return buffer.slice(enqueueCompleteRows(chunk, controller, rowTransform));
 };
 
 /**
@@ -90,24 +129,7 @@ const enqueueFileContentAndUpdateOctetStreamBuffer = (
   buffer: string,
   rowTransform: (row: Record<string, any>) => Record<string, any>,
 ) => {
-  const jsonLines = buffer.split('\n');
-  for (const line of jsonLines) {
-    if (line === '\r') {
-      buffer = buffer.slice(line.length + 1);
-      continue;
-    }
-    try {
-      const json = parseJson<Record<string, any>>(line);
-      const transformedLine = rowTransform(json);
-      controller.enqueue(new TextEncoder().encode(JSON.stringify(transformedLine)));
-      controller.enqueue(new TextEncoder().encode('\r\n'));
-      buffer = buffer.slice(line.length + 1);
-    } catch (error) {
-      captureException({ error, message: 'failed to parse JSON line in stream transform' });
-      // this is not a valid json line, so we don't update the buffer
-    }
-  }
-  return buffer;
+  return buffer.slice(enqueueCompleteRows(buffer, controller, rowTransform));
 };
 
 /**
@@ -198,6 +220,13 @@ export const getFormdataToFormdataStreamTransformer = (
           controller.enqueue(new TextEncoder().encode(`\r\n${newBoundary}--`));
           buffer = '';
         } else if (buffer.startsWith(boundary)) {
+          // A delimiter opening the next part and the one closing the body
+          // differ only in the two characters that follow, which may not have
+          // arrived. Deciding before they have read the closing delimiter as an
+          // opening one and then waited for headers that were never coming, so
+          // the body went out with nothing to close it.
+          if (buffer.length < boundary.length + 2) break;
+
           isParsingHeaders = true;
           currentHeaders = '';
         } else {
@@ -225,6 +254,18 @@ export const getOctetStreamToOctetStreamTransformer = (
       buffer += decoder.decode(new Uint8Array(chunk), { stream: true });
 
       buffer = enqueueFileContentAndUpdateOctetStreamBuffer(controller, buffer, rowTransform);
+    },
+    // A row is only whole once its newline has arrived, and the last row of a
+    // file need not have one. Held for a read that never comes it would be
+    // dropped, so the end of the stream is where it is read: that is what the
+    // two line readers below this one do, and what a file written elsewhere —
+    // the batch output Bedrock leaves behind, whose last byte is not this
+    // gateway's to decide — needs from us.
+    flush(controller) {
+      const remaining = buffer.trim();
+      buffer = '';
+
+      if (remaining) enqueueCompleteRows(`${remaining}\n`, controller, rowTransform);
     },
   });
   return transformStream;

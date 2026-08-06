@@ -359,11 +359,31 @@ that answered and said nothing:
     content. The tail is now held back until there is enough to tell. As above,
     what this rescues is the skipped-field path rather than the file itself.
 
-  What remains: a boundary sitting flush against the end of a read is still read
-  as the closing one, so 7 of those 615 splits end without the closing delimiter.
-  That is older than this change and unaltered by it — the root of it is that a
-  parsed row is consumed as though always newline-terminated, which is also why
-  the sibling transformer that reads batch output can repeat a row.
+  Two older faults underneath those were what remained, and are fixed with them.
+  A row was counted off a split of the text while the buffer was advanced by the
+  row's own length, which held only while every row parsed: one that did not left
+  the buffer where it was and the rows after it were counted regardless, so from
+  there the two disagreed. Rows are now read one newline at a time, and a row
+  that will never parse is read past rather than held. And a delimiter arriving
+  flush against the end of a read was taken for the one closing the body before
+  the two characters that tell them apart had arrived; that decision now waits
+  for them.
+
+  Six body shapes fed in at every point each could be split in two, and again at
+  every pair of points, now lose no row and always close.
+
+  The same row-counting fault was in the transformer that reads batch output
+  back, where it repeated rows rather than dropping them: a read beginning with
+  enough unparseable text made rows already in the buffer arrive a second time.
+  That transformer also stopped at the last newline, so a file whose final row
+  had none lost it; the end of the stream is now where that row is read. Both
+  are on the path that reads what a Bedrock batch left behind, which is served,
+  and whose last byte is not this gateway's to decide.
+
+  A row that will never parse is now read past rather than held. On the way out
+  that means a file reaches the provider a row short, noted in the log, where
+  before it corrupted what followed — worth knowing, since neither is the same
+  as refusing the upload.
 
 - A failed text completion reached the caller as the provider had written it.
   The shared transform for that endpoint built the named and reshaped error and

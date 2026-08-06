@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { getFormdataToFormdataStreamTransformer } from '../streamHandlerUtils';
+import {
+  getFormdataToFormdataStreamTransformer,
+  getOctetStreamToOctetStreamTransformer,
+} from '../streamHandlerUtils';
 
 const BOUNDARY = 'FormBoundaryUnderTest';
 
@@ -22,8 +25,39 @@ const buildBody = (rows: Record<string, unknown>[], fields: Record<string, strin
   `\r\n--${BOUNDARY}--`;
 
 /**
- * Feeds the body through the transformer in pieces of the given size, the way a
- * body larger than one read arrives, and returns what came out the other end.
+ * Feeds the body through the transformer as the given pieces, the way a body
+ * larger than one read arrives, and returns what came out the other end.
+ */
+const feed = async (body: string, pieces: string[]): Promise<string> => {
+  const transformer = getFormdataToFormdataStreamTransformer(
+    { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+    (row) => row,
+    {},
+  );
+
+  const encoder = new TextEncoder();
+  const writer = transformer.writable.getWriter();
+
+  const written = (async () => {
+    for (const piece of pieces) if (piece) await writer.write(encoder.encode(piece));
+    await writer.close();
+  })();
+
+  const decoder = new TextDecoder();
+  let out = '';
+  for await (const piece of transformer.readable as any) {
+    out += decoder.decode(piece, { stream: true });
+  }
+  await written;
+
+  return out;
+};
+
+/** The body split in two at exactly `cut`. */
+const runAt = (body: string, cut: number) => feed(body, [body.slice(0, cut), body.slice(cut)]);
+
+/**
+ * Feeds the body through the transformer in pieces of the given size.
  */
 const run = async (body: string, chunkSize: number): Promise<string> => {
   const transformer = getFormdataToFormdataStreamTransformer(
@@ -92,15 +126,42 @@ describe('a multipart upload split across reads', () => {
     }
   });
 
-  it('closes the body it opened', async () => {
+  it.each([
+    ['a row that will never parse', `{"custom_id":"a"}\nnot json at all\n{"custom_id":"b"}\n`],
+    ['rows ending in a carriage return', `{"custom_id":"a"}\r\n{"custom_id":"b"}\r\n`],
+  ])('closes the body it opened around %s', async (_name, fileBody) => {
+    // These are the two shapes the row reader is the whole difference on: a row
+    // that fails to parse, and one whose newline is preceded by a carriage
+    // return. A body of nothing but plain valid rows never tells them apart.
+    const body =
+      `--${BOUNDARY}\r\n` +
+      'Content-Disposition: form-data; name="file"; filename="batch.jsonl"\r\n\r\n' +
+      fileBody +
+      `\r\n--${BOUNDARY}--`;
+    const unclosed: number[] = [];
+
+    for (let cut = 1; cut < body.length; cut++) {
+      if (!(await runAt(body, cut)).trimEnd().endsWith('--')) unclosed.push(cut);
+    }
+
+    expect(unclosed).toEqual([]);
+  });
+
+  it('closes the body it opened, wherever it was cut', async () => {
     // The rows are only half of it: a body whose closing delimiter never
     // arrives is not a body the provider can read, and reading the rows alone
-    // is how that went unnoticed.
+    // is how that went unnoticed. The delimiter opening a part and the one
+    // closing the body differ by two characters, so a read ending between them
+    // is the case that used to decide wrongly and then wait forever.
     const body = buildBody(rows);
+    const unclosed: number[] = [];
 
-    for (const size of [16, 32, 64, 128, body.length]) {
-      expect((await run(body, size)).trimEnd().endsWith('--')).toBe(true);
+    for (let cut = 1; cut < body.length; cut++) {
+      const out = await runAt(body, cut);
+      if (!out.trimEnd().endsWith('--')) unclosed.push(cut);
     }
+
+    expect(unclosed).toEqual([]);
   });
 
   it('survives a field before the file that splits across reads', async () => {
@@ -114,5 +175,62 @@ describe('a multipart upload split across reads', () => {
     for (let size = 8; size <= 60; size++) {
       expect({ size, rows: rowsIn(await run(body, size)) }).toEqual({ size, rows });
     }
+  });
+});
+
+describe('batch output read in pieces', () => {
+  const readRows = async (chunks: string[]) => {
+    const transformer = getOctetStreamToOctetStreamTransformer((row) => row);
+    const encoder = new TextEncoder();
+    const writer = transformer.writable.getWriter();
+
+    const written = (async () => {
+      for (const chunk of chunks) await writer.write(encoder.encode(chunk));
+      await writer.close();
+    })();
+
+    const decoder = new TextDecoder();
+    let out = '';
+    for await (const piece of transformer.readable as any) {
+      out += decoder.decode(piece, { stream: true });
+    }
+    await written;
+
+    return out.split('\r\n').filter(Boolean);
+  };
+
+  it('reads each row once', async () => {
+    // A row that did not parse left the buffer where it was while the rows after
+    // it were counted off regardless, so the two disagreed from there on and
+    // what was left over came round again on the next read.
+    expect(await readRows(['G'.repeat(40) + '\n{"a":1}\n', '{"b":2}\n'])).toEqual([
+      '{"a":1}',
+      '{"b":2}',
+    ]);
+  });
+
+  it('waits for a row split across reads rather than reading half of it', async () => {
+    expect(await readRows(['{"a":1}\n{"b":', '2}\n'])).toEqual(['{"a":1}', '{"b":2}']);
+  });
+
+  it('reads past a row it cannot parse rather than offering it again', async () => {
+    // The row is whole, so no later byte will make it parse. Held, it would come
+    // round on every read that followed — and, since the next row is looked for
+    // from where the last one ended, would be looked for for ever.
+    expect(await readRows(['{"a":1}\nnot json at all\n{"b":2}\n'])).toEqual(['{"a":1}', '{"b":2}']);
+  });
+
+  it('reads the last row of a file that ends without a newline', async () => {
+    // A row is only whole once its newline has arrived, and the last row of a
+    // file need not have one. Held for a read that never comes, it is dropped —
+    // and the file this reads back is written elsewhere, so its last byte is
+    // not this gateway's to decide.
+    expect(await readRows(['{"a":1}\n{"b":2}'])).toEqual(['{"a":1}', '{"b":2}']);
+    expect(await readRows(['{"a":1}'])).toEqual(['{"a":1}']);
+    expect(await readRows(['{"a":1}\n{"b":', '2}'])).toEqual(['{"a":1}', '{"b":2}']);
+  });
+
+  it('reads rows ending in a carriage return', async () => {
+    expect(await readRows(['{"a":1}\r\n{"b":2}\r\n'])).toEqual(['{"a":1}', '{"b":2}']);
   });
 });
