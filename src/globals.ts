@@ -106,6 +106,7 @@ export const LATITUDE: string = 'latitude';
 export const DATABRICKS: string = 'databricks';
 export const REQUESTY: string = 'requesty';
 export const PINECONE: string = 'pinecone';
+export const SCX_AI: string = 'scx-ai';
 
 export const VALID_PROVIDERS = [
   ANTHROPIC,
@@ -174,6 +175,7 @@ export const VALID_PROVIDERS = [
   DATABRICKS,
   REQUESTY,
   PINECONE,
+  SCX_AI,
 ];
 
 export const CONTENT_TYPES = {

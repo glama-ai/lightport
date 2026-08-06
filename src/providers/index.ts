@@ -54,6 +54,7 @@ import OVHcloudConfig from './ovhcloud';
 import PalmAIConfig from './palm';
 import PerplexityAIConfig from './perplexity-ai';
 import PineconeConfig from './pinecone';
+import SCXAIConfig from './scx-ai';
 import PredibaseConfig from './predibase';
 import QdrantConfig from './qdrant';
 import RecraftAIConfig from './recraft-ai';
@@ -153,6 +154,7 @@ const Providers: { [key: string]: ProviderConfigs } = {
   latitude: LatitudeConfig,
   databricks: DatabricksConfig,
   pinecone: PineconeConfig,
+  'scx-ai': SCXAIConfig,
 };
 
 export default Providers;
