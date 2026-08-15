@@ -1,5 +1,5 @@
 import { AZURE_OPEN_AI } from '../../globals';
-import { OpenAIErrorResponseTransform } from '../openai/utils';
+import { OpenAIImageResponseTransform } from '../openai/utils';
 import { ErrorResponse, ImageGenerateResponse, ProviderConfig } from '../types';
 
 export const AzureOpenAIImageGenerateConfig: ProviderConfig = {
@@ -69,10 +69,5 @@ interface AzureOpenAIImageGenerateResponse extends ImageGenerateResponse {
 export const AzureOpenAIImageGenerateResponseTransform: (
   response: AzureOpenAIImageGenerateResponse | ErrorResponse,
   responseStatus: number,
-) => ImageGenerateResponse | ErrorResponse = (response, responseStatus) => {
-  if (responseStatus !== 200 && 'error' in response) {
-    return OpenAIErrorResponseTransform(response, AZURE_OPEN_AI);
-  }
-
-  return response;
-};
+) => ImageGenerateResponse | ErrorResponse = (response, responseStatus) =>
+  OpenAIImageResponseTransform(response, responseStatus, AZURE_OPEN_AI);

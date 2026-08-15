@@ -16,6 +16,8 @@ const OpenrouterAPIConfig: ProviderAPIConfig = {
         return '/v1/chat/completions';
       case 'createModelResponse':
         return '/v1/responses';
+      case 'imageGenerate':
+        return '/v1/images';
       default:
         return '';
     }

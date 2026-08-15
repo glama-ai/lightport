@@ -13,6 +13,7 @@ Retries, secret management, caching, rate limiting, and other operational concer
 - `POST /v1/chat/completions`
 - `POST /v1/completions`
 - `POST /v1/responses` (+ GET, DELETE, input_items)
+- `POST /v1/images/generations` (served by the providers that offer image generation — OpenAI, Azure OpenAI, OpenRouter, Bedrock, Vertex AI, Stability AI and others; the rest answer 400)
 
 **Supported providers:** OpenAI, Anthropic, Azure OpenAI, Google Gemini, Vertex AI, Bedrock, Cohere, Mistral, Groq, Deepseek, Together AI, Fireworks, Ollama, and [more](src/providers/) (77 total).
 

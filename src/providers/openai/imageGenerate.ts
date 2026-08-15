@@ -1,6 +1,6 @@
 import { OPEN_AI } from '../../globals';
 import { ErrorResponse, ImageGenerateResponse, ProviderConfig } from '../types';
-import { OpenAIErrorResponseTransform } from './utils';
+import { OpenAIImageResponseTransform } from './utils';
 
 export const OpenAIImageGenerateConfig: ProviderConfig = {
   prompt: {
@@ -69,10 +69,5 @@ interface OpenAIImageGenerateResponse extends ImageGenerateResponse {
 export const OpenAIImageGenerateResponseTransform: (
   response: OpenAIImageGenerateResponse | ErrorResponse,
   responseStatus: number,
-) => ImageGenerateResponse | ErrorResponse = (response, responseStatus) => {
-  if (responseStatus !== 200 && 'error' in response) {
-    return OpenAIErrorResponseTransform(response, OPEN_AI);
-  }
-
-  return response;
-};
+) => ImageGenerateResponse | ErrorResponse = (response, responseStatus) =>
+  OpenAIImageResponseTransform(response, responseStatus, OPEN_AI);

@@ -11,6 +11,7 @@ import { openAiErrorBody, openAiErrorEventAfterPartialFrame } from './errors/ope
 import { CONTENT_TYPES, HEADER_KEYS } from './globals';
 import { chatCompletionsHandler } from './handlers/chatCompletionsHandler';
 import { completionsHandler } from './handlers/completionsHandler';
+import { imageGenerationsHandler } from './handlers/imageGenerationsHandler';
 import modelResponsesHandler from './handlers/modelResponsesHandler';
 import { TRUNCATION_NOTICE, getTruncationNotice } from './handlers/truncationNotice';
 import { logger } from './logger';
@@ -520,6 +521,13 @@ const createApp = (opts?: FastifyHttpsOptions<any>, lifecycle: AppLifecycle = {}
     method: 'GET',
     url: '/v1/responses/:id/input_items',
     handler: handleRoute(modelResponsesHandler('listResponseInputItems', 'GET')),
+  });
+
+  // Image generations
+  app.route({
+    method: 'POST',
+    url: '/v1/images/generations',
+    handler: handleRoute(imageGenerationsHandler),
   });
 
   // 404
