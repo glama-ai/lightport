@@ -5,7 +5,9 @@ dist
 
 .env
 .env.*
+.envrc
 !.env.example
 
 .DS_Store
 *.log
+CLAUDE.local.md
