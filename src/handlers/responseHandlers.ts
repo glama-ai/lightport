@@ -43,6 +43,29 @@ export async function responseHandler(
   const responseContentType = response.headers?.get('content-type');
   const isSuccessStatusCode = [200, 246].includes(response.status);
 
+  /*
+    Whether the provider actually streamed, rather than whether the caller asked
+    it to.
+
+    `streamingMode` is read off the request before it is transformed, and several
+    providers never receive the `stream` the caller wrote: image generation is
+    the clear case — of the sixteen providers that generate images, all but two
+    drop the parameter — but a chat provider that ignores it does the same thing.
+    Read as SSE, a single JSON body yields no events at all, so the caller was
+    answered 200 with an empty body and billed for a result the gateway threw
+    away.
+
+    A JSON body is the one content type that can never be an event stream, which
+    makes it safe to say so here: no path that works today reaches this, because
+    every path that reaches it returns nothing. Anything else — `text/event-
+    stream`, or the binary frames Bedrock answers with — is left to the readers
+    that understand it.
+  */
+  const upstreamStreamed = !responseContentType?.startsWith(CONTENT_TYPES.APPLICATION_JSON);
+  // A cache hit is JSON by nature and is turned into a stream below on purpose,
+  // so it is exempt from the check rather than caught by it.
+  const isStreamingResponse = streamingMode && (isCacheHit || upstreamStreamed);
+
   if (typeof provider == 'object') {
     provider = provider.provider || '';
   }
@@ -57,7 +80,7 @@ export async function responseHandler(
     }).responseTransforms;
   }
 
-  if (responseTransformer && streamingMode && isSuccessStatusCode) {
+  if (responseTransformer && isStreamingResponse && isSuccessStatusCode) {
     responseTransformerFunction = providerTransformers?.[`stream-${responseTransformer}`];
   } else if (responseTransformer) {
     responseTransformerFunction = providerTransformers?.[responseTransformer];
@@ -83,7 +106,7 @@ export async function responseHandler(
     responseTransformerFunction = undefined;
   }
 
-  if (streamingMode && isSuccessStatusCode) {
+  if (isStreamingResponse && isSuccessStatusCode) {
     if (isCacheHit && responseTransformerFunction) {
       const streamingResponse = await handleJSONToStreamResponse(
         response,
