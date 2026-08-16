@@ -1,5 +1,6 @@
 import { openAiErrorResponse } from '../../errors/openAiError';
-import { CONTENT_TYPES, HEADER_KEYS, POWERED_BY, VALID_PROVIDERS } from '../../globals';
+import { CONTENT_TYPES, HEADER_KEYS, POWERED_BY } from '../../globals';
+import { VALID_PROVIDERS } from '../../providers/valid';
 import { logger } from '../../logger';
 import { captureException } from '../../sentry/captureException';
 import type { GatewayContext } from '../../types/GatewayContext';

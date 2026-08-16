@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { VALID_PROVIDERS } from '../../globals';
+import { supportsResponsesApiNatively } from '../../adapters/responses';
+import { VALID_PROVIDERS } from '../valid';
 import { transformUsingProviderConfig } from '../../services/transformToProviderRequest';
 import type { Params } from '../../types/requestBody';
 import Providers from '..';
@@ -41,29 +42,51 @@ describe('every registered provider', () => {
     expect(registered.length).toBeGreaterThan(70);
   });
 
-  // Registering a provider without allowlisting it leaves it unreachable: the
-  // header is refused before anything else happens.
-  const UNREACHABLE = [
-    'qdrant',
-    'milvus',
-    'replicate',
-    'bytez',
+  /**
+   * Providers registered and deliberately not published.
+   *
+   * Registering one without allowlisting it left it unreachable — the header is
+   * refused before anything else happens — and eleven had drifted that way with
+   * nothing saying so. The allowed names are read from the registry now, so
+   * this is the whole of the difference between the two.
+   */
+  const UNPUBLISHED = [
     '302ai',
+    'bytez',
     'cometapi',
     'matterai',
     'meshy',
+    'milvus',
     'nextbit',
+    'qdrant',
+    'replicate',
     'tripo3d',
     'z-ai',
   ];
 
-  it('is one a caller is allowed to name', () => {
+  it('is one a caller is allowed to name, unless it is held back on purpose', () => {
     const unreachable = registered.filter((name) => !VALID_PROVIDERS.includes(name));
 
-    // Pinned rather than asserted empty: each of these is reachable the moment
-    // it is added to `VALID_PROVIDERS`, so removing a name from this list is a
-    // decision to publish that provider rather than a tidy-up.
-    expect(unreachable.sort()).toEqual([...UNREACHABLE].sort());
+    expect(unreachable.sort()).toEqual([...UNPUBLISHED].sort());
+  });
+
+  it('is not allowed to be named without being registered', () => {
+    // The other direction, which drifted too: the allowed names once held
+    // `lightport` itself and providers the registry does not carry.
+    const unregistered = VALID_PROVIDERS.filter(
+      (name) => name !== 'lightport' && !registered.includes(name),
+    );
+
+    expect(unregistered).toEqual([]);
+  });
+
+  it('serves the Responses API itself only where it says it does', () => {
+    // Read from the provider rather than from a second list kept beside it.
+    for (const name of ['openai', 'azure-openai', 'openrouter', 'groq', 'x-ai']) {
+      expect(supportsResponsesApiNatively(name)).toBe(true);
+    }
+
+    expect(supportsResponsesApiNatively('cerebras')).toBe(false);
   });
 
   /**

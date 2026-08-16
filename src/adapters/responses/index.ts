@@ -12,9 +12,20 @@ export {
 export { transformChatCompletionsToResponses } from './responseTransform';
 export { transformStreamChunk, createStreamState } from './streamTransform';
 
-// Providers that natively support the Responses API (no adapter needed)
-const NATIVE_PROVIDERS = new Set(['openai', 'azure-openai', 'x-ai', 'groq', 'openrouter']);
+import Providers from '../../providers';
+
+/**
+ * Providers that serve the Responses API themselves, so no adapter is needed.
+ *
+ * Read from what each provider says about itself where it can say it, rather
+ * than from this list alone. A provider declared with `nativeResponses` is
+ * counted here without being named twice, which is what let the answer drift
+ * from the provider it was about.
+ */
+const NATIVE_PROVIDERS = new Set(['openai', 'azure-openai', 'openrouter']);
 
 export function supportsResponsesApiNatively(provider: string): boolean {
-  return NATIVE_PROVIDERS.has(provider?.toLowerCase() || '');
+  const name = provider?.toLowerCase() || '';
+
+  return NATIVE_PROVIDERS.has(name) || Boolean((Providers as Record<string, any>)[name]?.nativeResponses);
 }

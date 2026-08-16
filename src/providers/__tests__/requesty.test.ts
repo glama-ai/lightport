@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import ProviderConfigs from '../index';
-import { VALID_PROVIDERS } from '../../globals';
+import { VALID_PROVIDERS } from '../valid';
 import { transformUsingProviderConfig } from '../../services/transformToProviderRequest';
 import type { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
 import type { Options, Params } from '../../types/requestBody';

@@ -1,7 +1,6 @@
 import {
   AZURE_OPEN_AI,
   OLLAMA,
-  VALID_PROVIDERS,
   GOOGLE_VERTEX_AI,
   TRITON,
   HEADER_KEYS,
@@ -9,6 +8,7 @@ import {
 import type { GatewayContext } from '../../../types/GatewayContext';
 import { Environment } from '../../../utils/env';
 import { z } from 'zod';
+import { VALID_PROVIDERS } from '../../../providers/valid';
 
 // Regex patterns for validation (defined once for reusability)
 const VALIDATION_PATTERNS = {
