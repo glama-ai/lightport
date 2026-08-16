@@ -6,7 +6,12 @@ import { Params, Message } from '../../types/requestBody';
 import { OpenAIChatCompleteConfig, OpenAIChatCompleteResponse } from '../openai/chatComplete';
 import { OpenAICompleteResponse } from '../openai/complete';
 import { ErrorResponse, ProviderConfig } from '../types';
-import { readProviderResponse } from '../utils';
+import {
+  generateInvalidProviderResponseError,
+  readProviderResponse,
+  transformReasoning,
+  transformUsageDetails,
+} from '../utils';
 import { OpenAICreateModelResponseConfig } from './createModelResponse';
 
 type CustomTransformer<T, U> = (response: T | ErrorResponse, isError?: boolean) => U;
@@ -267,11 +272,33 @@ export const createSpeechParams = (
  * not. It exists because that provider's shape is its own, and handing it a
  * reshaped envelope would take away the very thing it was written to read.
  */
+const nameProvider = (body: Record<string, any>, provider: string) => {
+  // An aggregator names the house that actually served the request in this same
+  // field, and stamping over it left a caller who routed through one in order to
+  // find that out told the aggregator's name every time.
+  if (typeof body.provider === 'string' && body.provider !== provider) {
+    body.upstream_provider = body.provider;
+  }
+
+  // Assigned rather than defined: `Object.defineProperty` on an absent key
+  // creates it `writable: false, configurable: false`, so a second stamp threw
+  // and a later assignment threw with it.
+  body.provider = provider;
+
+  return body;
+};
+
 const upstreamTransformer = <T>(
   provider: string,
   customTransformer?: CustomTransformer<any, T>,
+  { answersWithChoices = false }: { answersWithChoices?: boolean } = {},
 ) => {
-  return (response: any, responseStatus: number) => {
+  return (
+    response: any,
+    responseStatus: number,
+    _responseHeaders?: Headers,
+    strictOpenAiCompliance?: boolean,
+  ) => {
     const read = readProviderResponse(response, responseStatus, provider ?? OPEN_AI);
 
     if (read.kind === 'failure') {
@@ -280,11 +307,33 @@ const upstreamTransformer = <T>(
 
     if (customTransformer) return customTransformer(read.body);
 
-    Object.defineProperty(read.body, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-    return read.body;
+    if (!answersWithChoices) return nameProvider(read.body, provider);
+
+    // `Array.isArray`, not `'choices' in body`: a body naming the field and
+    // leaving it null passes that test and then fails on the first thing done
+    // with it, which reaches the caller as a 500 of the gateway's own making
+    // rather than as the unreadable answer it is.
+    if (!Array.isArray(read.body.choices)) {
+      return generateInvalidProviderResponseError(read.body, provider ?? OPEN_AI);
+    }
+
+    // Unknown only on the path a mislabelled body takes, which passes two
+    // arguments. Read as strict there, so nothing outside OpenAI's own shape is
+    // emitted to a caller who never said they would accept it.
+    const strict = strictOpenAiCompliance ?? true;
+
+    return nameProvider(
+      {
+        ...read.body,
+        choices: read.body.choices.map((choice: Record<string, any>) =>
+          choice?.message && typeof choice.message === 'object'
+            ? { ...choice, message: { ...choice.message, ...transformReasoning(choice.message, strict) } }
+            : choice,
+        ),
+        ...(read.body.usage && { usage: { ...read.body.usage, ...transformUsageDetails(read.body.usage) } }),
+      },
+      provider,
+    );
   };
 };
 
@@ -301,7 +350,7 @@ const CompleteResponseTransformer = <T extends OpenAICompleteResponse | ErrorRes
   provider: string,
   customTransformer?: CustomTransformer<OpenAICompleteResponse, T>,
 ) =>
-  upstreamTransformer(provider, customTransformer) as (
+  upstreamTransformer(provider, customTransformer, { answersWithChoices: true }) as (
     response: T | ErrorResponse,
     responseStatus: number,
   ) => T | ErrorResponse;
@@ -310,7 +359,7 @@ const ChatCompleteResponseTransformer = <T extends OpenAIChatCompleteResponse | 
   provider: string,
   customTransformer?: CustomTransformer<OpenAIChatCompleteResponse, T>,
 ) =>
-  upstreamTransformer(provider, customTransformer) as (
+  upstreamTransformer(provider, customTransformer, { answersWithChoices: true }) as (
     response: T | ErrorResponse,
     responseStatus: number,
   ) => T | ErrorResponse;

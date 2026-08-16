@@ -5,6 +5,8 @@ const chatComplete = (provider = 'testprovider') =>
   responseTransformers(provider, { chatComplete: true }).chatComplete as (
     response: unknown,
     status: number,
+    headers?: Headers,
+    strictOpenAiCompliance?: boolean,
   ) => any;
 
 describe('a failure the provider did not write in OpenAI shape', () => {
@@ -145,5 +147,85 @@ describe('a provider that brought its own transformer', () => {
     (transforms.embed as any)({ error: { message: 'nope' } }, 400);
 
     expect(seen).toEqual([true]);
+  });
+});
+
+describe('an answer in a shape the caller cannot use', () => {
+  // A 200 is not a promise that the body is readable, and the first thing done
+  // with `choices` is to walk it.
+  it.each([
+    ['null', { id: 'x', choices: null }],
+    ['absent', { id: 'x' }],
+    ['an object', { id: 'x', choices: { 0: {} } }],
+  ])('is reported as unreadable when choices is %s', (_name, body) => {
+    const answer = chatComplete()(body, 200);
+
+    // Not a throw: an uncaught one here reaches the caller as a 500 of the
+    // gateway's own making rather than as the unreadable answer it is.
+    expect(answer.error.message).toContain('Invalid response received from testprovider');
+    expect(answer.provider).toBe('testprovider');
+  });
+});
+
+describe("a reasoning model's thinking", () => {
+  const reasoned = {
+    id: 'x',
+    choices: [{ message: { role: 'assistant', content: 'four', reasoning_content: 'two plus two' } }],
+  };
+
+  it('is given the shape the Responses adapter reads', () => {
+    // The non-streaming adapter reads a reasoning turn from `content_blocks`
+    // alone, so without this a reasoner's answer arrived with the thinking gone.
+    const answer = chatComplete()(reasoned, 200, undefined, false);
+
+    expect(answer.choices[0].message.content_blocks).toEqual([
+      { type: 'thinking', thinking: 'two plus two' },
+      { type: 'text', text: 'four' },
+    ]);
+  });
+
+  it('is left in OpenAI shape for a caller who asked for strict compliance', () => {
+    const answer = chatComplete()(reasoned, 200, undefined, true);
+
+    expect(answer.choices[0].message.content_blocks).toBeUndefined();
+    expect(answer.choices[0].message.reasoning_content).toBe('two plus two');
+  });
+
+  it('says nothing when the model did no thinking', () => {
+    const answer = chatComplete()({ id: 'x', choices: [{ message: { content: 'hi' } }] }, 200, undefined, false);
+
+    expect(answer.choices[0].message.content_blocks).toBeUndefined();
+  });
+});
+
+describe('a request the provider served from its cache', () => {
+  it('reports the cached tokens where an OpenAI client reads them', () => {
+    const answer = chatComplete()(
+      { id: 'x', choices: [], usage: { prompt_tokens: 100, prompt_cache_hit_tokens: 90 } },
+      200,
+    );
+
+    // Reported as a full-price miss otherwise, for a request that was 90% a hit.
+    expect(answer.usage.prompt_tokens_details.cached_tokens).toBe(90);
+  });
+});
+
+describe('an answer that already named a provider', () => {
+  it('keeps the house that served it', () => {
+    const answer = chatComplete()({ id: 'x', choices: [], provider: 'anthropic' }, 200);
+
+    expect(answer.provider).toBe('testprovider');
+    expect(answer.upstream_provider).toBe('anthropic');
+  });
+
+  it('can be named twice without throwing', () => {
+    // `Object.defineProperty` on an absent key creates it non-writable, so the
+    // second stamp threw and any later assignment threw with it.
+    const body = { id: 'x', choices: [] };
+
+    expect(() => {
+      chatComplete('one')(body, 200);
+      chatComplete('two')(body, 200);
+    }).not.toThrow();
   });
 });
