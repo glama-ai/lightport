@@ -62,7 +62,9 @@ import RekaAIConfig from './reka-ai';
 import ReplicateConfig from './replicate';
 import RequestyConfig from './requesty';
 import SagemakerConfig from './sagemaker';
+import SaladCloudConfig from './saladcloud';
 import SambaNovaConfig from './sambanova';
+import SCXAIConfig from './scx-ai';
 import SegmindConfig from './segmind';
 import SiliconFlowConfig from './siliconflow';
 import StabilityAIConfig from './stability-ai';
@@ -154,6 +156,8 @@ const Providers: { [key: string]: ProviderConfigs } = {
   latitude: LatitudeConfig,
   databricks: DatabricksConfig,
   empiriolabs: EmpirioLabsConfig,
+  saladcloud: SaladCloudConfig,
+  'scx-ai': SCXAIConfig,
   pinecone: PineconeConfig,
 };
 

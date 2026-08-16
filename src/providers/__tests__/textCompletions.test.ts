@@ -106,6 +106,9 @@ describe('providers left out of the sweep', () => {
     'groq',
     // The route answers, but the parameters it takes are not published.
     'empiriolabs',
+    // Served, but aliased to chat: the body comes back as a `chat.completion`
+    // carrying `message`, which the text-completion transformer cannot read.
+    'scx-ai',
     // No published text-completion endpoint found.
     'dashscope',
     'upstage',

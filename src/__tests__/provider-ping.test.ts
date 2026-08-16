@@ -101,6 +101,19 @@ const PROVIDERS: ProviderEntry[] = [
     env: { SAMBANOVA_API_KEY: '' },
   },
   {
+    provider: 'saladcloud',
+    model: 'qwen3.6-35b-a3b',
+    responsesModel: 'qwen3.6-35b-a3b',
+    env: { SALAD_CLOUD_API_KEY: '' },
+  },
+  {
+    provider: 'scx-ai',
+    // Unconfirmed against a live key, as for EmpirioLabs: SCX.ai names no
+    // default model, so the first run with a key settles what to ask for.
+    model: 'gpt-4o-mini',
+    env: { SCX_AI_API_KEY: '' },
+  },
+  {
     provider: 'x-ai',
     model: 'grok-3-mini-fast',
     env: { XAI_API_KEY: '' },
