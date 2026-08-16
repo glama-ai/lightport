@@ -136,16 +136,21 @@ const transformAndAppendThinkingMessageItem = (item: ContentType, out: any[]) =>
 const getMessageContent = (message: Message) => {
   if (!message.content && !message.tool_calls && !message.tool_call_id) return [];
   if (message.role === 'tool') {
-    const toolResultContent = getMessageTextContentArray(message);
+    const parts = getMessageTextContentArray(message);
+    // A `toolResult` holds document | image | json | searchResult | text | video
+    // and nothing else, so a cache point nested among them is not a checkpoint
+    // Bedrock will honour. It belongs beside the tool result, as a sibling.
+    const toolResultContent = parts.filter((part) => !('cachePoint' in part));
+    const cachePoints = parts.filter((part) => 'cachePoint' in part);
     return [
       {
         toolResult: {
-          ...(toolResultContent.length && (toolResultContent[0] as { text: string })?.text
-            ? { content: toolResultContent }
-            : { content: [] }), // Bedrock allows empty array but does not allow empty string in content.
+          // Bedrock allows empty array but does not allow empty string in content.
+          content: (toolResultContent[0] as { text: string })?.text ? toolResultContent : [],
           toolUseId: message.tool_call_id,
         },
       },
+      ...cachePoints,
     ];
   }
   const out: BedrockContentItem[] = [];
