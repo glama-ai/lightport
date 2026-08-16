@@ -76,3 +76,49 @@ describe('a tool result the caller asked to checkpoint', () => {
     ]);
   });
 });
+
+describe('a message whose content is a plain string', () => {
+  // There is no content part to hang `cache_control` off, so the caller puts it
+  // on the message itself, which is where the Anthropic provider reads it from.
+  it('checkpoints a tool result marked on the message', () => {
+    const params = toolLoop('sunny');
+    (params.messages as any)[3].cache_control = { type: 'ephemeral' };
+
+    const transformed: any = transformUsingProviderConfig(
+      BedrockConverseChatCompleteConfig,
+      params,
+    );
+
+    expect(contentOf(transformed, 'toolResult')).toEqual([
+      { toolResult: { content: [{ text: 'sunny' }], toolUseId: 'call_1' } },
+      { cachePoint: { type: 'default' } },
+    ]);
+  });
+
+  it('checkpoints a system message marked on the message', () => {
+    const params = toolLoop('sunny');
+    (params.messages as any)[0] = {
+      role: 'system',
+      content: 'be brief',
+      cache_control: { type: 'ephemeral' },
+    };
+
+    const transformed: any = transformUsingProviderConfig(
+      BedrockConverseChatCompleteConfig,
+      params,
+    );
+
+    expect(transformed.system).toEqual([{ text: 'be brief' }, { cachePoint: { type: 'default' } }]);
+  });
+
+  it('says nothing about caching when the caller did not', () => {
+    const transformed: any = transformUsingProviderConfig(
+      BedrockConverseChatCompleteConfig,
+      toolLoop('sunny'),
+    );
+
+    expect(contentOf(transformed, 'toolResult')).toEqual([
+      { toolResult: { content: [{ text: 'sunny' }], toolUseId: 'call_1' } },
+    ]);
+  });
+});

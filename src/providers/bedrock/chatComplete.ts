@@ -2,6 +2,7 @@ import { BEDROCK, imagesMimeTypes, fileExtensionMimeTypeMap, videoMimeTypes } fr
 import {
   Message,
   Params,
+  PromptCache,
   ToolCall,
   SYSTEM_MESSAGE_ROLES,
   ContentType,
@@ -107,10 +108,15 @@ const getMessageTextContentArray = (
     });
     return finalContent;
   }
+  // Content written as a plain string has no part to carry `cache_control`, so
+  // the caller puts it on the message — the same place the Anthropic provider
+  // reads it from. Ignoring it here dropped the checkpoint without a word.
+  const messageCacheControl = (message as Message & PromptCache).cache_control;
   return [
     {
       text: message.content || '',
     },
+    ...(messageCacheControl ? [{ cachePoint: { type: 'default' } }] : []),
   ];
 };
 
