@@ -22,7 +22,7 @@ const NscaleConfig = defineOpenAICompatibleProvider({
     // `user` alone: nScale publishes `seed` for completions, which chat
     // excludes, so the two lists are not the same list.
     complete: { path: '/v1/completions', defaultModel: null, exclude: ['user'] },
-    imageGenerate: { path: '/v1/images/generations' },
+    imageGenerate: { path: '/v1/images/generations', defaultModel: null },
   },
 });
 

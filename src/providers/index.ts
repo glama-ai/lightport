@@ -14,6 +14,7 @@ import CometAPIConfig from './cometapi';
 import { DashScopeConfig } from './dashscope';
 import DatabricksConfig from './databricks';
 import DeepbricksConfig from './deepbricks';
+import EmpirioLabsConfig from './empiriolabs';
 import DeepInfraConfig from './deepinfra';
 import DeepSeekAPIConfig from './deepseek';
 import { FeatherlessAIConfig } from './featherless-ai';
@@ -152,6 +153,7 @@ const Providers: { [key: string]: ProviderConfigs } = {
   ovhcloud: OVHcloudConfig,
   latitude: LatitudeConfig,
   databricks: DatabricksConfig,
+  empiriolabs: EmpirioLabsConfig,
   pinecone: PineconeConfig,
 };
 

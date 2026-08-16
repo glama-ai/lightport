@@ -106,6 +106,7 @@ export const LATITUDE: string = 'latitude';
 export const DATABRICKS: string = 'databricks';
 export const REQUESTY: string = 'requesty';
 export const PINECONE: string = 'pinecone';
+export const EMPIRIOLABS: string = 'empiriolabs';
 
 
 export const CONTENT_TYPES = {

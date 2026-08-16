@@ -104,6 +104,8 @@ describe('providers left out of the sweep', () => {
   it.each([
     // Documented as chat-only.
     'groq',
+    // The route answers, but the parameters it takes are not published.
+    'empiriolabs',
     // No published text-completion endpoint found.
     'dashscope',
     'upstage',

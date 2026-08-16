@@ -4,6 +4,14 @@ import { ProviderAPIConfig, ProviderConfig, ProviderConfigs } from '../types';
 import { chatCompleteParams, completeParams, embedParams, responseTransformers } from '.';
 
 /**
+ * A path, or how to work one out.
+ *
+ * Most are a constant. A few providers put the model in the path itself, which
+ * is theirs to build.
+ */
+type Path = string | ((args: { gatewayRequestBodyJSON: any; [key: string]: any }) => string);
+
+/**
  * An endpoint that takes a model, and the model to send when the caller names
  * none.
  *
@@ -15,14 +23,6 @@ import { chatCompleteParams, completeParams, embedParams, responseTransformers }
  * default, so nothing is sent and the provider says so itself. Its complaint
  * reaches the caller readable, which is the one thing that was missing.
  */
-/**
- * A path, or how to work one out.
- *
- * Most are a constant. A few providers put the model in the path itself, which
- * is theirs to build.
- */
-type Path = string | ((args: { gatewayRequestBodyJSON: any; [key: string]: any }) => string);
-
 type ModelEndpoint = {
   path: Path;
   defaultModel: string | null;
@@ -59,7 +59,7 @@ export interface OpenAICompatibleProvider {
     chatComplete?: ModelEndpoint;
     complete?: ModelEndpoint;
     embed?: ModelEndpoint;
-    imageGenerate?: Endpoint;
+    imageGenerate?: ModelEndpoint;
   };
   /** Headers beyond the bearer token, which is always sent. */
   headers?: (args: { providerOptions: { apiKey?: string; [key: string]: any } }) => Record<
@@ -152,7 +152,15 @@ export const defineOpenAICompatibleProvider = (
         endpoints.embed.extra,
       ),
     }),
-    ...(endpoints.imageGenerate && { imageGenerate: { ...OpenAIImageGenerateConfig } }),
+    ...(endpoints.imageGenerate && {
+      imageGenerate: {
+        ...OpenAIImageGenerateConfig,
+        // Replaced rather than inherited, as for chat: OpenAI's config defaults
+        // this to `dall-e-2`, which no other provider serves.
+        model: { ...OpenAIImageGenerateConfig.model, default: endpoints.imageGenerate.defaultModel ?? undefined },
+        ...endpoints.imageGenerate.extra,
+      },
+    }),
     api,
     responseTransforms: {
       ...responseTransformers(name, {

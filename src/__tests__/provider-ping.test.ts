@@ -83,6 +83,14 @@ const PROVIDERS: ProviderEntry[] = [
     env: { OPENROUTER_API_KEY: '' },
   },
   {
+    provider: 'empiriolabs',
+    // Named from the house that made it, as this aggregator's catalogue does.
+    // Unconfirmed against a live key — nobody here has one — so the first run
+    // that does have one settles it.
+    model: 'gpt-4o-mini',
+    env: { EMPIRIOLABS_API_KEY: '' },
+  },
+  {
     provider: 'cerebras',
     model: 'llama-4-scout-17b-16e-instruct',
     env: { CEREBRAS_API_KEY: '' },

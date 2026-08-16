@@ -25,7 +25,7 @@ const HyperbolicConfig = defineOpenAICompatibleProvider({
     // accept would lose it silently where forwarding one it does not lets it
     // say so.
     complete: { path: '/v1/completions', defaultModel: null, extra: { ...sampling } },
-    imageGenerate: { path: '/v1/image/generation' },
+    imageGenerate: { path: '/v1/image/generation', defaultModel: null },
   },
 });
 
