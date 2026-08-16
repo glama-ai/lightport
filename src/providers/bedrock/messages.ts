@@ -180,29 +180,36 @@ const appendToolResultBlock = (
   toolResultBlock: ToolResultBlockParam,
 ) => {
   const content = toolResultBlock.content;
-  const transformedToolResultContent: any[] = [];
+  const parts: any[] = [];
   if (typeof content === 'string') {
-    transformedToolResultContent.push({
+    parts.push({
       text: content,
     });
   } else if (Array.isArray(content)) {
     for (const item of content) {
       if (item.type === 'text') {
-        transformedToolResultContent.push({
+        parts.push({
           text: item.text,
         });
+        if (item.cache_control) {
+          parts.push(getCachePoint(item.cache_control));
+        }
       } else if (item.type === 'image') {
-        appendImageBlock(transformedToolResultContent, item);
+        appendImageBlock(parts, item);
       }
     }
   }
+  // A `toolResult` holds document | image | json | searchResult | text | video,
+  // so a cache point a part asked for is not one Bedrock will honour where the
+  // part sits. It goes beside the tool result, as a sibling.
   transformedContent.push({
     toolResult: {
       toolUseId: toolResultBlock.tool_use_id,
       status: toolResultBlock.is_error ? 'error' : 'success',
-      content: transformedToolResultContent,
+      content: parts.filter((part) => !('cachePoint' in part)),
     },
   });
+  transformedContent.push(...parts.filter((part) => 'cachePoint' in part));
   if (toolResultBlock.cache_control) {
     transformedContent.push(getCachePoint(toolResultBlock.cache_control));
   }

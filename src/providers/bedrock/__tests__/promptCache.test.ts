@@ -279,3 +279,78 @@ describe('the lifetime a caller asked a checkpoint to live for', () => {
     ]);
   });
 });
+
+describe('a checkpoint asked for by a part inside an Anthropic-shaped tool result', () => {
+  const messagesParams = (toolResultContent: unknown): Params =>
+    ({
+      model: 'anthropic.claude-sonnet-4-5-20250929-v1:0',
+      max_tokens: 16,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'what is the weather?' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'call_1', name: 'get_weather', input: { city: 'Oslo' } },
+          ],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'call_1', content: toolResultContent }],
+        },
+      ],
+    }) as unknown as Params;
+
+  // The cache point has to clear the `toolResult` whether the caller marked the
+  // block or a part inside it — a part is the easier one to miss, because the
+  // block-level marker is handled a few lines further down.
+  it('leaves the tool result for a text part', () => {
+    const transformed: any = transformUsingProviderConfig(
+      BedrockConverseMessagesConfig,
+      messagesParams([
+        { type: 'text', text: 'sunny', cache_control: { type: 'ephemeral', ttl: '1h' } },
+      ]),
+    );
+
+    expect(contentOf(transformed, 'toolResult')).toEqual([
+      {
+        toolResult: { content: [{ text: 'sunny' }], status: 'success', toolUseId: 'call_1' },
+      },
+      { cachePoint: { type: 'default', ttl: '1h' } },
+    ]);
+  });
+
+  it('leaves the tool result for an image part', () => {
+    const transformed: any = transformUsingProviderConfig(
+      BedrockConverseMessagesConfig,
+      messagesParams([
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'aGk=' },
+          cache_control: { type: 'ephemeral', ttl: '1h' },
+        },
+      ]),
+    );
+
+    expect(contentOf(transformed, 'toolResult')).toEqual([
+      {
+        toolResult: {
+          content: [{ image: { format: 'png', source: { bytes: 'aGk=' } } }],
+          status: 'success',
+          toolUseId: 'call_1',
+        },
+      },
+      { cachePoint: { type: 'default', ttl: '1h' } },
+    ]);
+  });
+
+  it('says nothing about caching when no part asked for it', () => {
+    const transformed: any = transformUsingProviderConfig(
+      BedrockConverseMessagesConfig,
+      messagesParams([{ type: 'text', text: 'sunny' }]),
+    );
+
+    expect(contentOf(transformed, 'toolResult')).toEqual([
+      { toolResult: { content: [{ text: 'sunny' }], status: 'success', toolUseId: 'call_1' } },
+    ]);
+  });
+});
