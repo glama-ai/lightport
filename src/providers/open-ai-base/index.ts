@@ -303,11 +303,17 @@ const upstreamTransformer = <T>(
   ) => {
     const read = readProviderResponse(response, responseStatus, provider ?? OPEN_AI);
 
+    // Named after the custom transformer rather than instead of it. Every
+    // provider that brought one was stamping the name by hand, and the ones
+    // that forgot answered without saying who had answered.
+    const named = (result: any) =>
+      result && typeof result === 'object' ? nameProvider(result, provider) : result;
+
     if (read.kind === 'failure') {
-      return customTransformer ? customTransformer(response, true) : read.error;
+      return customTransformer ? named(customTransformer(response, true)) : read.error;
     }
 
-    if (customTransformer) return customTransformer(read.body);
+    if (customTransformer) return named(customTransformer(read.body));
 
     if (!answersWithChoices) return nameProvider(read.body, provider);
 

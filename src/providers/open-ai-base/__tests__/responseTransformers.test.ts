@@ -32,6 +32,29 @@ describe('a failure the provider did not write in OpenAI shape', () => {
     expect(answer.error.type).toBe('value_error.missing');
   });
 
+  it('names a problem-details body, which is a standard and not a habit', () => {
+    // What an `application/problem+json` failure looks like — RFC 7807. Served
+    // verbatim by more than one provider, and unreadable to an OpenAI client
+    // until it is named.
+    const answer = chatComplete()(
+      { status: 401, title: 'Unauthorized', type: 'about:blank' },
+      401,
+    );
+
+    expect(answer.error.message).toBe('testprovider error: Unauthorized');
+    expect(answer.error.code).toBe('401');
+    expect(answer.error.type).toBe('about:blank');
+  });
+
+  it('prefers what a problem-details body explains over what it is titled', () => {
+    const answer = chatComplete()(
+      { status: 429, title: 'Too Many Requests', detail: 'Rate limit reached, retry in 30s' },
+      429,
+    );
+
+    expect(answer.error.message).toBe('testprovider error: Rate limit reached, retry in 30s');
+  });
+
   it('names an error reported as a bare string', () => {
     const answer = chatComplete()({ error: 'no api key', code: 'missing_api_key' }, 401);
 
@@ -118,7 +141,7 @@ describe('a provider that brought its own transformer', () => {
     const seen: unknown[] = [];
     const transforms = responseTransformers('testprovider', {
       chatComplete: (response, isError) => {
-        seen.push({ response, isError });
+        seen.push({ response: { ...(response as object) }, isError });
         return response as any;
       },
     });

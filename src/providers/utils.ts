@@ -121,15 +121,23 @@ export const readProviderResponse: (
     return failure(response.error, null, typeof response.code === 'string' ? response.code : null);
   }
 
-  // FastAPI's own shape, which several providers serve unaltered — either a
-  // list of validation errors or a bare string.
-  if ('detail' in response && response.detail?.length) {
-    if (!Array.isArray(response.detail)) return failure(String(response.detail));
-
+  // FastAPI's validation shape, which several providers serve unaltered: a list
+  // of errors under `detail`, each naming the field it is about.
+  if (Array.isArray(response.detail) && response.detail.length) {
     const [first] = response.detail;
     const field = first?.loc?.join('.') ?? '';
 
     return failure(`${field ? `${field}: ` : ''}${first?.msg}`, first?.type ?? null);
+  }
+
+  // Problem details, RFC 7807 — a standard rather than any one provider's
+  // habit, and the shape an `application/problem+json` body arrives in.
+  if (typeof response.detail === 'string' || typeof response.title === 'string') {
+    return failure(
+      response.detail || response.title,
+      typeof response.type === 'string' ? response.type : null,
+      response.status === undefined ? null : String(response.status),
+    );
   }
 
   if (typeof response.message === 'string') return failure(response.message);
@@ -186,7 +194,8 @@ export const transformFinishReason = (
 
   Providers speaking OpenAI's dialect return the chain of thought beside
   `content` rather than inside it — as `reasoning_content` in the convention
-  DeepSeek set, or as `reasoning` in the one OpenRouter set. A transform that
+  DeepSeek set, as `reasoning` in the one OpenRouter set, or as `reasoning_text`
+  as some vLLM builds emit it. A transform that
   rebuilds the message field by field drops whichever it is, and the caller is
   handed a reply with the thinking missing. Where the model spends the whole turn
   reasoning, `content` is empty and the answer arrives blank, indistinguishable
@@ -211,7 +220,7 @@ export const transformReasoning = (
   // `||`, not `??`: an aggregator normalising the field it did not receive
   // leaves it an empty string rather than absent, and the thinking is in the
   // other one.
-  const reasoning = message?.reasoning_content || message?.reasoning;
+  const reasoning = message?.reasoning_content || message?.reasoning || message?.reasoning_text;
   if (typeof reasoning !== 'string' || !reasoning) return {};
 
   return {
