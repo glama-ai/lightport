@@ -193,7 +193,9 @@ export const completeParams = (
 
 export const embedParams = (
   exclude: string[],
-  defaultValues?: Record<string, string>,
+  // `undefined` is a value here rather than an absence: a provider saying it has
+  // no default model is not the same as a provider saying nothing.
+  defaultValues?: Record<string, string | undefined>,
   extra?: ProviderConfig,
 ): ProviderConfig => {
   const baseParams: ProviderConfig = {
