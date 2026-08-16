@@ -1,14 +1,11 @@
 import { LAMBDA } from '../../globals';
-import { chatCompleteParams, completeParams, responseTransformers } from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import { LambdaAPIConfig } from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 
-export const LambdaProviderConfig: ProviderConfigs = {
-  chatComplete: chatCompleteParams([], { model: 'Liquid-AI-40B' }),
-  complete: completeParams([], { model: 'Liquid-AI-40B' }),
-  api: LambdaAPIConfig,
-  responseTransforms: responseTransformers(LAMBDA, {
-    chatComplete: true,
-    complete: true,
-  }),
-};
+export const LambdaProviderConfig = defineOpenAICompatibleProvider({
+  name: LAMBDA,
+  baseURL: 'https://api.lambdalabs.com',
+  endpoints: {
+    chatComplete: { path: '/v1/chat/completions', defaultModel: 'Liquid-AI-40B' },
+    complete: { path: '/v1/completions', defaultModel: 'Liquid-AI-40B' },
+  },
+});

@@ -77,15 +77,11 @@ describe('every registered provider', () => {
   const SENDS_OPENAIS_MODEL = [
     'groq',
     'deepbricks',
-    'cerebras',
     'nscale',
     'hyperbolic',
     '302ai',
     'cometapi',
-    'modal',
-    'iointelligence',
     'aibadgr',
-    'databricks',
   ];
 
   it('sends a model of its own, or none', () => {

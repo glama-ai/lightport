@@ -1,25 +1,14 @@
 import { NEBIUS } from '../../globals';
-import {
-  chatCompleteParams,
-  embedParams,
-  completeParams,
-  responseTransformers,
-} from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import { nebiusAPIConfig } from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 
-const NebiusConfig: ProviderConfigs = {
-  chatComplete: chatCompleteParams([], {
-    model: 'Qwen/Qwen2.5-72B-Instruct-fast',
-  }),
-  embed: embedParams([], { model: 'BAAI/bge-en-icl' }),
-  complete: completeParams([], { model: 'Qwen/Qwen2.5-72B-Instruct-fast' }),
-  api: nebiusAPIConfig,
-  responseTransforms: responseTransformers(NEBIUS, {
-    chatComplete: true,
-    embed: true,
-    complete: true,
-  }),
-};
+const NebiusConfig = defineOpenAICompatibleProvider({
+  name: NEBIUS,
+  baseURL: 'https://api.studio.nebius.ai',
+  endpoints: {
+    chatComplete: { path: '/v1/chat/completions', defaultModel: 'Qwen/Qwen2.5-72B-Instruct-fast' },
+    complete: { path: '/v1/completions', defaultModel: 'Qwen/Qwen2.5-72B-Instruct-fast' },
+    embed: { path: '/v1/embeddings', defaultModel: 'BAAI/bge-en-icl' },
+  },
+});
 
 export default NebiusConfig;

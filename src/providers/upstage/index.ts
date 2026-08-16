@@ -1,14 +1,11 @@
 import { UPSTAGE } from '../../globals';
-import { chatCompleteParams, embedParams, responseTransformers } from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import { upstageAPIConfig } from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 
-export const UpstageConfig: ProviderConfigs = {
-  chatComplete: chatCompleteParams([], { model: 'solar-pro' }),
-  embed: embedParams([], { model: 'solar-embedding-1-large-query' }),
-  api: upstageAPIConfig,
-  responseTransforms: responseTransformers(UPSTAGE, {
-    chatComplete: true,
-    embed: true,
-  }),
-};
+export const UpstageConfig = defineOpenAICompatibleProvider({
+  name: UPSTAGE,
+  baseURL: 'https://api.upstage.ai',
+  endpoints: {
+    chatComplete: { path: '/v1/solar/chat/completions', defaultModel: 'solar-pro' },
+    embed: { path: '/v1/solar/embeddings', defaultModel: 'solar-embedding-1-large-query' },
+  },
+});

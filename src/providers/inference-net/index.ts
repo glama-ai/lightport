@@ -1,12 +1,10 @@
 import { INFERENCENET } from '../../globals';
-import { chatCompleteParams, responseTransformers } from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import { inferenceAPIConfig } from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 
-export const InferenceNetProviderConfigs: ProviderConfigs = {
-  chatComplete: chatCompleteParams([], { model: 'llama3' }),
-  api: inferenceAPIConfig,
-  responseTransforms: responseTransformers(INFERENCENET, {
-    chatComplete: true,
-  }),
-};
+export const InferenceNetProviderConfigs = defineOpenAICompatibleProvider({
+  name: INFERENCENET,
+  baseURL: 'https://api.inference.net',
+  endpoints: {
+    chatComplete: { path: '/v1/chat/completions', defaultModel: 'llama3' },
+  },
+});

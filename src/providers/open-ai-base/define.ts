@@ -15,8 +15,16 @@ import { chatCompleteParams, completeParams, embedParams, responseTransformers }
  * default, so nothing is sent and the provider says so itself. Its complaint
  * reaches the caller readable, which is the one thing that was missing.
  */
+/**
+ * A path, or how to work one out.
+ *
+ * Most are a constant. A few providers put the model in the path itself, which
+ * is theirs to build.
+ */
+type Path = string | ((args: { gatewayRequestBodyJSON: any; [key: string]: any }) => string);
+
 type ModelEndpoint = {
-  path: string;
+  path: Path;
   defaultModel: string | null;
   /** Parameters of OpenAI's this provider does not take. */
   exclude?: string[];
@@ -24,7 +32,7 @@ type ModelEndpoint = {
   extra?: ProviderConfig;
 };
 
-type Endpoint = { path: string };
+type Endpoint = { path: Path };
 
 export interface OpenAICompatibleProvider {
   /** The slug the caller names in `x-lightport-provider`. */
@@ -35,8 +43,11 @@ export interface OpenAICompatibleProvider {
    * A custom host replaces the base URL whole, so a `/v1` written in here
    * vanishes for any caller who supplies one and the request goes to a path the
    * provider does not serve. The version belongs in each endpoint's path.
+   *
+   * A function for the providers whose host is the caller's to name — a
+   * workspace or a region they configure.
    */
-  baseURL: string;
+  baseURL: string | ((args: { providerOptions: any; [key: string]: any }) => string);
   /**
    * Only what this provider actually serves.
    *
@@ -84,7 +95,7 @@ export const defineOpenAICompatibleProvider = (
   // Thrown where it is written rather than reported where it is used: a
   // provider assembled wrongly cannot serve any request, so failing to start is
   // both the earliest and the clearest place to say so.
-  if (VERSION_SUFFIX.test(baseURL)) {
+  if (typeof baseURL === 'string' && VERSION_SUFFIX.test(baseURL)) {
     throw new Error(
       `${name}: the version segment belongs in each endpoint path, not in baseURL (${baseURL}). ` +
         'A custom host replaces the base URL whole and would drop it.',
@@ -92,18 +103,26 @@ export const defineOpenAICompatibleProvider = (
   }
 
   for (const [fn, endpoint] of Object.entries(endpoints)) {
-    if (!endpoint.path.startsWith('/')) {
+    if (typeof endpoint.path === 'string' && !endpoint.path.startsWith('/')) {
       throw new Error(`${name}: the ${fn} path must start with a slash, and is "${endpoint.path}".`);
     }
   }
 
   const api: ProviderAPIConfig = {
-    getBaseURL: () => baseURL,
+    getBaseURL: (args) => (typeof baseURL === 'string' ? baseURL : baseURL(args)),
     headers: ({ providerOptions }) => ({
-      Authorization: `Bearer ${providerOptions.apiKey}`,
+      // Sent only when there is a key to send. `Bearer undefined` is a header
+      // the provider has to reject on its own terms, and some read a credential
+      // from elsewhere when none is named here.
+      ...(providerOptions.apiKey && { Authorization: `Bearer ${providerOptions.apiKey}` }),
       ...headers?.({ providerOptions }),
     }),
-    getEndpoint: ({ fn }) => (endpoints as Record<string, Endpoint | undefined>)[fn]?.path ?? '',
+    getEndpoint: (args) => {
+      const path = (endpoints as Record<string, Endpoint | undefined>)[args.fn]?.path;
+      if (path === undefined) return '';
+
+      return typeof path === 'string' ? path : path(args);
+    },
   };
 
   // `model: undefined` is not the same as saying nothing: it replaces the

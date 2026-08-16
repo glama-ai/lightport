@@ -8,11 +8,16 @@ import type { Params, Options } from '../../types/requestBody';
 // The providers whose text-completion endpoint is published. Adding one here
 // means its `/completions` was checked against the provider's own reference, not
 // assumed from the endpoint being OpenAI-shaped.
+//
+// The whole address rather than the path, because which half the version
+// segment sits in is not the provider's contract with the caller — the address
+// the request arrives at is. A provider that moves `/v1` out of its base URL,
+// so that a custom host cannot drop it, must still answer at the same place.
 const providers = [
-  ['cerebras', '/completions'],
-  ['hyperbolic', '/v1/completions'],
-  ['sambanova', '/v1/completions'],
-  ['nscale', '/completions'],
+  ['cerebras', 'https://api.cerebras.ai/v1/completions'],
+  ['hyperbolic', 'https://api.hyperbolic.xyz/v1/completions'],
+  ['sambanova', 'https://api.sambanova.ai/v1/completions'],
+  ['nscale', 'https://inference.api.nscale.com/v1/completions'],
 ] as const;
 
 // What each provider does not take on `/completions`, and so must not be sent.
@@ -56,9 +61,10 @@ describe.each(providers)('%s text completions', (name, endpoint) => {
   });
 
   it('points at the provider’s own completions endpoint', () => {
-    expect(config.api.getEndpoint({ fn: 'complete', providerOptions: {} as Options })).toBe(
-      endpoint,
-    );
+    const base = config.api.getBaseURL({ providerOptions: {} as Options });
+    const path = config.api.getEndpoint({ fn: 'complete', providerOptions: {} as Options });
+
+    expect(`${base}${path}`).toBe(endpoint);
   });
 
   it('sends what the provider takes and holds back what it does not', () => {
