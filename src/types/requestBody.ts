@@ -312,7 +312,8 @@ export interface Message {
 }
 
 export interface PromptCache {
-  cache_control?: { type: 'ephemeral' };
+  /** `ttl` is how long the checkpoint lives; providers that read it default to `5m`. */
+  cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
 }
 
 export interface CitationMetadata {

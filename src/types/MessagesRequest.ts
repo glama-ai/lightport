@@ -1,6 +1,8 @@
 export interface CacheControlEphemeral {
   type: 'ephemeral';
   scope?: 'global';
+  /** How long the checkpoint lives. Defaults to `5m` when left off. */
+  ttl?: '5m' | '1h';
 }
 
 export interface ServerToolUseBlockParam {

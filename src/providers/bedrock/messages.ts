@@ -39,6 +39,7 @@ import {
   BedrockMessagesParams,
   BedrockStreamState,
 } from './types';
+import { getCachePoint } from './utils/cachePoint';
 import {
   transformInferenceConfig,
   transformToolsConfig as transformToolConfig,
@@ -49,11 +50,7 @@ const appendTextBlock = (transformedContent: any[], textBlock: TextBlockParam) =
     text: textBlock.text,
   });
   if (textBlock.cache_control) {
-    transformedContent.push({
-      cachePoint: {
-        type: 'default',
-      },
-    });
+    transformedContent.push(getCachePoint(textBlock.cache_control));
   }
 };
 
@@ -80,11 +77,7 @@ const appendImageBlock = (transformedContent: any[], imageBlock: ImageBlockParam
       },
     });
     if (imageBlock.cache_control) {
-      transformedContent.push({
-        cachePoint: {
-          type: 'default',
-        },
-      });
+      transformedContent.push(getCachePoint(imageBlock.cache_control));
     }
   } else if (imageBlock.source.type === 'url') {
     transformedContent.push({
@@ -98,11 +91,7 @@ const appendImageBlock = (transformedContent: any[], imageBlock: ImageBlockParam
       },
     });
     if (imageBlock.cache_control) {
-      transformedContent.push({
-        cachePoint: {
-          type: 'default',
-        },
-      });
+      transformedContent.push(getCachePoint(imageBlock.cache_control));
     }
   } else if (imageBlock.source.type === 'file') {
     // not supported
@@ -147,11 +136,7 @@ const appendDocumentBlock = (transformedContent: any[], documentBlock: DocumentB
     });
   }
   if (documentBlock.cache_control) {
-    transformedContent.push({
-      cachePoint: {
-        type: 'default',
-      },
-    });
+    transformedContent.push(getCachePoint(documentBlock.cache_control));
   }
 };
 
@@ -186,11 +171,7 @@ const appendToolUseBlock = (transformedContent: any[], toolUseBlock: ToolUseBloc
     },
   });
   if (toolUseBlock.cache_control) {
-    transformedContent.push({
-      cachePoint: {
-        type: 'default',
-      },
-    });
+    transformedContent.push(getCachePoint(toolUseBlock.cache_control));
   }
 };
 
@@ -223,11 +204,7 @@ const appendToolResultBlock = (
     },
   });
   if (toolResultBlock.cache_control) {
-    transformedContent.push({
-      cachePoint: {
-        type: 'default',
-      },
-    });
+    transformedContent.push(getCachePoint(toolResultBlock.cache_control));
   }
 };
 
@@ -326,11 +303,7 @@ export const BedrockConverseMessagesConfig: ProviderConfig = {
             text: item.text,
           });
           if (item.cache_control) {
-            transformedSystem.push({
-              cachePoint: {
-                type: 'default',
-              },
-            });
+            transformedSystem.push(getCachePoint(item.cache_control));
           }
         });
         return transformedSystem;

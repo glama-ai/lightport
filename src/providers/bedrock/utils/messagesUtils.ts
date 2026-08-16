@@ -1,4 +1,5 @@
 import { BedrockMessagesParams } from '../types';
+import { getCachePoint } from './cachePoint';
 
 export const transformInferenceConfig = (params: BedrockMessagesParams) => {
   const inferenceConfig: Record<string, any> = {};
@@ -48,11 +49,7 @@ export const transformToolsConfig = (params: BedrockMessagesParams) => {
           },
         });
         if (tool.cache_control) {
-          tools.push({
-            cachePoint: {
-              type: 'default',
-            },
-          });
+          tools.push(getCachePoint(tool.cache_control));
         }
       }
     }

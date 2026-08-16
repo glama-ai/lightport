@@ -175,8 +175,13 @@ export type BedrockContentItem = {
       };
     };
   };
-  cachePoint?: {
+  cachePoint?: BedrockCachePoint['cachePoint'];
+};
+
+export type BedrockCachePoint = {
+  cachePoint: {
     type: string;
+    ttl?: string;
   };
 };
 

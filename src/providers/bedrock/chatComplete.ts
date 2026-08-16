@@ -28,11 +28,13 @@ import {
 } from './complete';
 import { BedrockErrorResponse } from './embed';
 import {
+  BedrockCachePoint,
   BedrockChatCompleteStreamChunk,
   BedrockChatCompletionResponse,
   BedrockContentItem,
   BedrockStreamState,
 } from './types';
+import { getCachePoint } from './utils/cachePoint';
 import {
   getBedrockErrorChunk,
   transformAdditionalModelRequestFields,
@@ -89,21 +91,17 @@ export interface BedrockConverseAI21ChatCompletionsParams extends BedrockChatCom
 
 const getMessageTextContentArray = (
   message: Message,
-): Array<{ text: string } | { cachePoint: { type: string } }> => {
+): Array<{ text: string } | BedrockCachePoint> => {
   if (message.content && typeof message.content === 'object') {
     const filteredContentMessages = message.content.filter((item) => item.type === 'text');
-    const finalContent: Array<{ text: string } | { cachePoint: { type: string } }> = [];
+    const finalContent: Array<{ text: string } | BedrockCachePoint> = [];
     filteredContentMessages.forEach((item) => {
       finalContent.push({
         text: item.text || '',
       });
       // push a cache point.
       if (item.cache_control) {
-        finalContent.push({
-          cachePoint: {
-            type: 'default',
-          },
-        });
+        finalContent.push(getCachePoint(item.cache_control));
       }
     });
     return finalContent;
@@ -116,7 +114,7 @@ const getMessageTextContentArray = (
     {
       text: message.content || '',
     },
-    ...(messageCacheControl ? [{ cachePoint: { type: 'default' } }] : []),
+    ...(messageCacheControl ? [getCachePoint(messageCacheControl)] : []),
   ];
 };
 
@@ -260,11 +258,7 @@ const getMessageContent = (message: Message) => {
 
       if (item.cache_control) {
         // if content item has `cache_control`, push the cache point to the out array
-        out.push({
-          cachePoint: {
-            type: 'default',
-          },
-        });
+        out.push(getCachePoint(item.cache_control));
       }
     });
   }
@@ -332,9 +326,9 @@ export const BedrockConverseChatCompleteConfig: ProviderConfig = {
       required: false,
       transform: (params: BedrockChatCompletionsParams) => {
         if (!params.messages) return;
-        const systemMessages: Array<{ text: string } | { cachePoint: { type: string } }> =
+        const systemMessages: Array<{ text: string } | BedrockCachePoint> =
           params.messages.reduce(
-            (acc: Array<{ text: string } | { cachePoint: { type: string } }>, msg) => {
+            (acc: Array<{ text: string } | BedrockCachePoint>, msg) => {
               if (SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
                 const content = getMessageTextContentArray(msg);
                 return acc.concat(...content);
@@ -353,8 +347,7 @@ export const BedrockConverseChatCompleteConfig: ProviderConfig = {
     transform: (params: BedrockChatCompletionsParams) => {
       const canBeAmazonModel = params.model?.includes('amazon');
       const tools: Array<
-        | { toolSpec: { name: string; description?: string; inputSchema: any } }
-        | { cachePoint: { type: string } }
+        { toolSpec: { name: string; description?: string; inputSchema: any } } | BedrockCachePoint
       > = [];
       params.tools?.forEach((tool) => {
         if (tool.function) {
@@ -367,11 +360,7 @@ export const BedrockConverseChatCompleteConfig: ProviderConfig = {
           });
         }
         if (tool.cache_control && !canBeAmazonModel) {
-          tools.push({
-            cachePoint: {
-              type: 'default',
-            },
-          });
+          tools.push(getCachePoint(tool.cache_control));
         }
       });
       const toolConfig = {
