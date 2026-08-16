@@ -67,6 +67,7 @@ export const LINGYI: string = 'lingyi';
 export const ZHIPU: string = 'zhipu';
 export const NOVITA_AI: string = 'novita-ai';
 export const MONSTERAPI: string = 'monsterapi';
+export const EMPIRIOLABS: string = 'empiriolabs';
 export const DEEPSEEK: string = 'deepseek';
 export const PREDIBASE: string = 'predibase';
 export const TRITON: string = 'triton';
@@ -139,6 +140,7 @@ export const VALID_PROVIDERS = [
   NOVITA_AI,
   MONSTERAPI,
   DEEPSEEK,
+  EMPIRIOLABS,
   PREDIBASE,
   TRITON,
   VOYAGE,

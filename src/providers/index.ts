@@ -16,6 +16,7 @@ import DatabricksConfig from './databricks';
 import DeepbricksConfig from './deepbricks';
 import DeepInfraConfig from './deepinfra';
 import DeepSeekAPIConfig from './deepseek';
+import EmpirioLabsConfig from './empiriolabs';
 import { FeatherlessAIConfig } from './featherless-ai';
 import FireworksAIConfig from './fireworks-ai';
 import GoogleConfig from './google';
@@ -109,6 +110,7 @@ const Providers: { [key: string]: ProviderConfigs } = {
   'novita-ai': NovitaAIConfig,
   monsterapi: MonsterAPIConfig,
   deepseek: DeepSeekAPIConfig,
+  empiriolabs: EmpirioLabsConfig,
   predibase: PredibaseConfig,
   triton: TritonConfig,
   voyage: VoyageConfig,
