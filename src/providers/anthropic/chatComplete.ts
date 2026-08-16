@@ -70,7 +70,8 @@ interface AnthropicToolResultContentItem {
         text?: string;
         cache_control?: {
           type: string;
-          ttl?: number;
+          // Anthropic reads a duration here, not a count of anything.
+          ttl?: '5m' | '1h';
         };
       }[]
     | string;
