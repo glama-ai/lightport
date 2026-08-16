@@ -1,17 +1,5 @@
 import { OVHCLOUD } from '../../globals';
 import { parseJson } from '../../utils/parseJson';
-import { OpenAIChatCompleteConfig } from '../openai/chatComplete';
-import { ParameterConfig, ProviderConfig } from '../types';
-
-const ovhcloudModelConfig = OpenAIChatCompleteConfig.model as ParameterConfig;
-
-export const OVHcloudChatCompleteConfig: ProviderConfig = {
-  ...OpenAIChatCompleteConfig,
-  model: {
-    ...ovhcloudModelConfig,
-    default: 'axon',
-  },
-};
 
 interface OVHcloudStreamChunk {
   id: string;

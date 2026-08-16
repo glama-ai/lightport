@@ -33,12 +33,14 @@ describe('requesty is reachable', () => {
   });
 
   it('is addressed where Requesty answers', () => {
-    expect(requesty.api.getBaseURL({ providerOptions: {} as Options })).toBe(
-      'https://router.requesty.ai/v1',
-    );
-    expect(requesty.api.getEndpoint({ fn: 'chatComplete', providerOptions: {} as Options })).toBe(
-      '/chat/completions',
-    );
+    // The whole address rather than the halves. Which half holds the version
+    // segment is not Requesty's contract with the caller — it belongs in the
+    // path, so that a custom host replacing the base URL cannot drop it — and
+    // the address the request arrives at must not move either way.
+    const base = requesty.api.getBaseURL({ providerOptions: {} as Options });
+    const path = requesty.api.getEndpoint({ fn: 'chatComplete', providerOptions: {} as Options });
+
+    expect(`${base}${path}`).toBe('https://router.requesty.ai/v1/chat/completions');
   });
 
   it('carries the key as a bearer token', () => {

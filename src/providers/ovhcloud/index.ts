@@ -1,20 +1,19 @@
 import { OVHCLOUD } from '../../globals';
-import { responseTransformers } from '../open-ai-base';
-import OVHcloudAPIConfig from './api';
-import {
-  OVHcloudChatCompleteConfig,
-  OVHcloudChatCompleteStreamChunkTransform,
-} from './chatComplete';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
+import { OVHcloudChatCompleteStreamChunkTransform } from './chatComplete';
 
-const OVHcloudConfig = {
-  api: OVHcloudAPIConfig,
-  chatComplete: OVHcloudChatCompleteConfig,
+const OVHcloudConfig = defineOpenAICompatibleProvider({
+  name: OVHCLOUD,
+  baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net',
+  endpoints: {
+    chatComplete: { path: '/v1/chat/completions', defaultModel: 'axon' },
+  },
+});
+
+export default {
+  ...OVHcloudConfig,
   responseTransforms: {
-    ...responseTransformers(OVHCLOUD, {
-      chatComplete: true,
-    }),
+    ...OVHcloudConfig.responseTransforms,
     'stream-chatComplete': OVHcloudChatCompleteStreamChunkTransform,
   },
 };
-
-export default OVHcloudConfig;
