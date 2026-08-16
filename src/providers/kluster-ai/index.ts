@@ -1,38 +1,38 @@
 import { KLUSTER_AI } from '../../globals';
-import { chatCompleteParams, embedParams, responseTransformers } from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import KlusterAIAPIConfig from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 import { KlusterAIResponseTransform } from './chatComplete';
 import { KlusterAIRequestTransform } from './uploadFile';
 
-const KlusterAIConfig: ProviderConfigs = {
-  chatComplete: chatCompleteParams(
-    [],
-    { model: 'klusterai/Meta-Llama-3.1-8B-Instruct-Turbo' },
-    {
-      store: {
-        param: 'store',
-      },
-      metadata: {
-        param: 'metadata',
-        required: true,
+const KlusterAIConfig = defineOpenAICompatibleProvider({
+  name: KLUSTER_AI,
+  baseURL: 'https://api.kluster.ai',
+  headers: () => ({ 'Content-Type': 'application/json' }),
+  endpoints: {
+    chatComplete: {
+      path: '/v1/chat/completions',
+      defaultModel: 'klusterai/Meta-Llama-3.1-8B-Instruct-Turbo',
+      extra: {
+        store: { param: 'store' },
+        metadata: { param: 'metadata', required: true },
       },
     },
-  ),
-  embed: embedParams([], {
-    model: 'klusterai/Meta-Llama-3.1-8B-Instruct-Turbo',
-  }),
-  api: KlusterAIAPIConfig,
+    embed: {
+      path: '/v1/embeddings',
+      defaultModel: 'klusterai/Meta-Llama-3.1-8B-Instruct-Turbo',
+    },
+  },
+});
+
+export default {
+  ...KlusterAIConfig,
+  api: {
+    ...KlusterAIConfig.api,
+    getEndpoint: (args: { fn: string; [key: string]: any }) =>
+      args.fn === 'uploadFile' ? '/v1/files' : KlusterAIConfig.api.getEndpoint(args),
+  },
   responseTransforms: {
-    ...responseTransformers(KLUSTER_AI, {
-      chatComplete: true,
-      embed: true,
-    }),
+    ...KlusterAIConfig.responseTransforms,
     uploadFile: KlusterAIResponseTransform,
   },
-  requestTransforms: {
-    uploadFile: KlusterAIRequestTransform,
-  },
+  requestTransforms: { uploadFile: KlusterAIRequestTransform },
 };
-
-export default KlusterAIConfig;
