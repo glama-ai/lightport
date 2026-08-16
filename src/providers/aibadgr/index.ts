@@ -1,18 +1,19 @@
 import { AIBADGR } from '../../globals';
-import { chatCompleteParams, responseTransformers } from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import AIBadgrAPIConfig from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 import { AIBadgrChatCompleteStreamChunkTransform } from './chatComplete';
 
-const AIBadgrConfig: ProviderConfigs = {
-  api: AIBadgrAPIConfig,
-  chatComplete: chatCompleteParams([]),
+const AIBadgrConfig = defineOpenAICompatibleProvider({
+  name: AIBADGR,
+  baseURL: 'https://aibadgr.com/api',
+  endpoints: {
+    chatComplete: { path: '/v1/chat/completions', defaultModel: null },
+  },
+});
+
+export default {
+  ...AIBadgrConfig,
   responseTransforms: {
-    ...responseTransformers(AIBADGR, {
-      chatComplete: true,
-    }),
+    ...AIBadgrConfig.responseTransforms,
     'stream-chatComplete': AIBadgrChatCompleteStreamChunkTransform,
   },
 };
-
-export default AIBadgrConfig;

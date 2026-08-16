@@ -67,29 +67,23 @@ describe('every registered provider', () => {
   });
 
   /**
-   * Providers still sending OpenAI's model when the caller names none.
+   * Providers that write `gpt-3.5-turbo` into their own config.
    *
-   * `chatCompleteParams` copies OpenAI's own config, `gpt-3.5-turbo` included,
-   * so a provider that names no default sends a model it cannot route and
-   * answers a question nobody asked. Each name here is a provider that has not
-   * been converted yet.
+   * Not the same fault as inheriting it. `chatCompleteParams` copies OpenAI's
+   * config wholesale, default included, so a provider that named nothing was
+   * sending a model it could not route and nobody had chosen. These three named
+   * it, and each resells OpenAI's own models, so it may well be routable. A
+   * stated choice is theirs to revisit; a silent inheritance was not a choice at
+   * all.
    */
-  const SENDS_OPENAIS_MODEL = [
-    'groq',
-    'deepbricks',
-    'nscale',
-    'hyperbolic',
-    '302ai',
-    'cometapi',
-    'aibadgr',
-  ];
+  const NAMES_OPENAIS_MODEL = ['302ai', 'cometapi', 'deepbricks'];
 
   it('sends a model of its own, or none', () => {
-    const leaking = registered.filter(
+    const sending = registered.filter(
       (name) => name !== 'openai' && modelSentBy(name) === 'gpt-3.5-turbo',
     );
 
-    expect(leaking.sort()).toEqual([...SENDS_OPENAIS_MODEL].sort());
+    expect(sending.sort()).toEqual([...NAMES_OPENAIS_MODEL].sort());
   });
 
   it('leaves OpenAI sending its own model', () => {
@@ -117,6 +111,9 @@ describe('every registered provider', () => {
       }
     }
 
-    expect(shared).toEqual(['cometapi.embed is openai.embed']);
+    // Nothing is shared any more. Asserted empty rather than pinned, because a
+    // provider that starts sharing one has reintroduced the fault rather than
+    // inherited it.
+    expect(shared).toEqual([]);
   });
 });

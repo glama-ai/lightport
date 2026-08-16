@@ -1,48 +1,40 @@
 import { HYPERBOLIC } from '../../globals';
-import { chatCompleteParams, completeParams, responseTransformers } from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import HyperbolicAPIConfig from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 import { HyperbolicChatCompleteStreamChunkTransform } from './chatComplete';
 import {
   HyperbolicImageGenerateConfig,
   HyperbolicImageGenerateResponseTransform,
 } from './imageGenerate';
 
-const HyperbolicConfig: ProviderConfigs = {
-  chatComplete: chatCompleteParams(
-    [],
-    {},
-    {
-      top_k: { param: 'top_k', default: -1 },
-      min_p: { param: 'min_p', default: 0, min: 0, max: 1 },
-      repetition_penalty: { param: 'repetition_penalty', default: 1 },
-    },
-  ),
-  // Nothing is excluded, as for chat above: Hyperbolic does not publish the
-  // parameters its completions endpoint takes, and dropping one it does accept
-  // would lose it silently where forwarding one it does not lets it say so. The
-  // sampling parameters chat adds are carried here for the same reason — the two
-  // endpoints are served by the same models, and leaving them out would drop
-  // them from one while the other passes them on.
-  complete: completeParams(
-    [],
-    {},
-    {
-      top_k: { param: 'top_k', default: -1 },
-      min_p: { param: 'min_p', default: 0, min: 0, max: 1 },
-      repetition_penalty: { param: 'repetition_penalty', default: 1 },
-    },
-  ),
+// The sampling parameters Hyperbolic adds beyond OpenAI's, carried by both
+// endpoints: the same models serve each, and naming them for one alone would
+// drop them from the other while it passed them on.
+const sampling = {
+  top_k: { param: 'top_k', default: -1 },
+  min_p: { param: 'min_p', default: 0, min: 0, max: 1 },
+  repetition_penalty: { param: 'repetition_penalty', default: 1 },
+};
+
+const HyperbolicConfig = defineOpenAICompatibleProvider({
+  name: HYPERBOLIC,
+  baseURL: 'https://api.hyperbolic.xyz',
+  endpoints: {
+    chatComplete: { path: '/v1/chat/completions', defaultModel: null, extra: { ...sampling } },
+    // Nothing is excluded, as for chat: Hyperbolic does not publish the
+    // parameters its completions endpoint takes, and dropping one it does
+    // accept would lose it silently where forwarding one it does not lets it
+    // say so.
+    complete: { path: '/v1/completions', defaultModel: null, extra: { ...sampling } },
+    imageGenerate: { path: '/v1/image/generation' },
+  },
+});
+
+export default {
+  ...HyperbolicConfig,
   imageGenerate: HyperbolicImageGenerateConfig,
-  api: HyperbolicAPIConfig,
   responseTransforms: {
-    ...responseTransformers(HYPERBOLIC, {
-      chatComplete: true,
-      complete: true,
-    }),
+    ...HyperbolicConfig.responseTransforms,
     'stream-chatComplete': HyperbolicChatCompleteStreamChunkTransform,
     imageGenerate: HyperbolicImageGenerateResponseTransform,
   },
 };
-
-export default HyperbolicConfig;

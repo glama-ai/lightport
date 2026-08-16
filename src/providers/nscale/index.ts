@@ -1,28 +1,36 @@
 import { NSCALE } from '../../globals';
-import { chatCompleteParams, completeParams, responseTransformers } from '../open-ai-base';
-import { ProviderConfigs } from '../types';
-import NscaleAPIConfig from './api';
+import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 import { NscaleImageGenerateConfig, NscaleImageGenerateResponseTransform } from './imageGenerate';
 
-const NscaleConfig: ProviderConfigs = {
-  chatComplete: chatCompleteParams([
-    'functions',
-    'function_call',
-    'user',
-    'seed',
-    'tools',
-    'tool_choice',
-    'stream_options',
-  ]),
-  // `user` alone: nScale publishes `seed` for completions, which chat excludes,
-  // so the two lists are not the same list.
-  complete: completeParams(['user']),
+const NscaleConfig = defineOpenAICompatibleProvider({
+  name: NSCALE,
+  baseURL: 'https://inference.api.nscale.com',
+  endpoints: {
+    chatComplete: {
+      path: '/v1/chat/completions',
+      defaultModel: null,
+      exclude: [
+        'functions',
+        'function_call',
+        'user',
+        'seed',
+        'tools',
+        'tool_choice',
+        'stream_options',
+      ],
+    },
+    // `user` alone: nScale publishes `seed` for completions, which chat
+    // excludes, so the two lists are not the same list.
+    complete: { path: '/v1/completions', defaultModel: null, exclude: ['user'] },
+    imageGenerate: { path: '/v1/images/generations' },
+  },
+});
+
+export default {
+  ...NscaleConfig,
   imageGenerate: NscaleImageGenerateConfig,
-  api: NscaleAPIConfig,
   responseTransforms: {
-    ...responseTransformers(NSCALE, { chatComplete: true, complete: true }),
+    ...NscaleConfig.responseTransforms,
     imageGenerate: NscaleImageGenerateResponseTransform,
   },
 };
-
-export default NscaleConfig;
