@@ -5,8 +5,8 @@ import { OpenAIResponse, ModelResponseDeleteResponse } from '../../types/modelRe
 import { Params, Message } from '../../types/requestBody';
 import { OpenAIChatCompleteConfig, OpenAIChatCompleteResponse } from '../openai/chatComplete';
 import { OpenAICompleteResponse } from '../openai/complete';
-import { OpenAIErrorResponseTransform } from '../openai/utils';
 import { ErrorResponse, ProviderConfig } from '../types';
+import { readProviderResponse } from '../utils';
 import { OpenAICreateModelResponseConfig } from './createModelResponse';
 
 type CustomTransformer<T, U> = (response: T | ErrorResponse, isError?: boolean) => U;
@@ -254,256 +254,111 @@ export const createSpeechParams = (
   return { ...baseParams, ...extra };
 };
 
-const EmbedResponseTransformer = <T extends EmbedResponse | ErrorResponse>(
+/**
+ * What every transformer here does, in one place.
+ *
+ * The seven below repeated these two steps and differed only in the shape they
+ * declared — and every difference between them turned out to be a slip rather
+ * than a decision: one built a failure and returned the body anyway, another
+ * ignored its custom transformer on the failure path entirely. Written once,
+ * there is nowhere left for them to disagree.
+ *
+ * A custom transformer is handed the body as the provider wrote it, failure or
+ * not. It exists because that provider's shape is its own, and handing it a
+ * reshaped envelope would take away the very thing it was written to read.
+ */
+const upstreamTransformer = <T>(
   provider: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  customTransformer?: CustomTransformer<EmbedResponse, T>,
+  customTransformer?: CustomTransformer<any, T>,
 ) => {
-  const transformer: (
-    response: T | ErrorResponse,
-    responseStatus: number,
-  ) => EmbedResponse | ErrorResponse = (response, responseStatus) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      return OpenAIErrorResponseTransform(response, provider ?? OPEN_AI);
+  return (response: any, responseStatus: number) => {
+    const read = readProviderResponse(response, responseStatus, provider ?? OPEN_AI);
+
+    if (read.kind === 'failure') {
+      return customTransformer ? customTransformer(response, true) : read.error;
     }
 
-    Object.defineProperty(response, 'provider', {
+    if (customTransformer) return customTransformer(read.body);
+
+    Object.defineProperty(read.body, 'provider', {
       value: provider,
       enumerable: true,
     });
-    return response;
+    return read.body;
   };
-
-  return transformer;
 };
+
+const EmbedResponseTransformer = <T extends EmbedResponse | ErrorResponse>(
+  provider: string,
+  customTransformer?: CustomTransformer<EmbedResponse, T>,
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => EmbedResponse | ErrorResponse;
 
 const CompleteResponseTransformer = <T extends OpenAICompleteResponse | ErrorResponse>(
   provider: string,
   customTransformer?: CustomTransformer<OpenAICompleteResponse, T>,
-) => {
-  const transformer: (response: T | ErrorResponse, responseStatus: number) => T | ErrorResponse = (
-    response,
-    responseStatus,
-  ) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(response, provider ?? OPEN_AI);
-      if (customTransformer) {
-        return customTransformer(errorResponse, true);
-      }
-
-      // The transformed error was built and then dropped, so a failure on this
-      // endpoint reached the caller as the provider had written it while the
-      // same failure on chat arrived named and reshaped.
-      return errorResponse;
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-
-    return response;
-  };
-
-  return transformer;
-};
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => T | ErrorResponse;
 
 const ChatCompleteResponseTransformer = <T extends OpenAIChatCompleteResponse | ErrorResponse>(
   provider: string,
   customTransformer?: CustomTransformer<OpenAIChatCompleteResponse, T>,
-) => {
-  const transformer: (response: T | ErrorResponse, responseStatus: number) => T | ErrorResponse = (
-    response,
-    responseStatus,
-  ) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(response, provider ?? OPEN_AI);
-      if (customTransformer) {
-        return customTransformer(response, true);
-      }
-
-      return errorResponse;
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-    return response;
-  };
-
-  return transformer;
-};
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => T | ErrorResponse;
 
 const CreateSpeechResponseTransformer = <T extends Response | ErrorResponse>(
   provider: string,
   customTransformer?: CustomTransformer<Response | ErrorResponse, T>,
-) => {
-  const transformer: (response: T | ErrorResponse, responseStatus: number) => T | ErrorResponse = (
-    response,
-    responseStatus,
-  ) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(response, provider ?? OPEN_AI);
-      if (customTransformer) {
-        return customTransformer(errorResponse, true);
-      }
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-
-    return response;
-  };
-
-  return transformer;
-};
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => T | ErrorResponse;
 
 export const OpenAICreateModelResponseTransformer = <T extends OpenAIResponse | ErrorResponse>(
   provider: string,
   customTransformer?: CustomTransformer<OpenAIResponse, T>,
-) => {
-  const transformer: (response: T | ErrorResponse, responseStatus: number) => T | ErrorResponse = (
-    response,
-    responseStatus,
-  ) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(
-        response as ErrorResponse,
-        provider ?? OPEN_AI,
-      );
-      if (customTransformer) {
-        return customTransformer(response as ErrorResponse, true);
-      }
-
-      return errorResponse;
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-    return response;
-  };
-
-  return transformer;
-};
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => T | ErrorResponse;
 
 export const OpenAIGetModelResponseTransformer = <T extends OpenAIResponse | ErrorResponse>(
   provider: string,
   customTransformer?: CustomTransformer<OpenAIResponse, T>,
-) => {
-  const transformer: (response: T | ErrorResponse, responseStatus: number) => T | ErrorResponse = (
-    response,
-    responseStatus,
-  ) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(
-        response as ErrorResponse,
-        provider ?? OPEN_AI,
-      );
-      if (customTransformer) {
-        return customTransformer(response as ErrorResponse, true);
-      }
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => T | ErrorResponse;
 
-      return errorResponse;
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-    return response;
-  };
-
-  return transformer;
-};
-
-export const OpenAIDeleteModelResponseTransformer = <
-  T extends ModelResponseDeleteResponse | ErrorResponse,
->(
+export const OpenAIDeleteModelResponseTransformer = <T extends ModelResponseDeleteResponse | ErrorResponse>(
   provider: string,
   customTransformer?: CustomTransformer<ModelResponseDeleteResponse, T>,
-) => {
-  const transformer: (response: T | ErrorResponse, responseStatus: number) => T | ErrorResponse = (
-    response,
-    responseStatus,
-  ) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(response, provider ?? OPEN_AI);
-      if (customTransformer) {
-        return customTransformer(response, true);
-      }
-
-      return errorResponse;
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-    return response;
-  };
-
-  return transformer;
-};
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => T | ErrorResponse;
 
 export const OpenAIListInputItemsResponseTransformer = <T extends ResponseItemList | ErrorResponse>(
   provider: string,
   customTransformer?: CustomTransformer<ResponseItemList, T>,
-) => {
-  const transformer: (response: T | ErrorResponse, responseStatus: number) => T | ErrorResponse = (
-    response,
-    responseStatus,
-  ) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(response, provider ?? OPEN_AI);
-      if (customTransformer) {
-        return customTransformer(response, true);
-      }
-
-      return errorResponse;
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-    return response;
-  };
-
-  return transformer;
-};
+) =>
+  upstreamTransformer(provider, customTransformer) as (
+    response: T | ErrorResponse,
+    responseStatus: number,
+  ) => T | ErrorResponse;
 
 /**
  *
@@ -571,9 +426,7 @@ export const OpenAIResponseTransform = (
   responseStatus: number,
   provider: string,
 ): Response | ErrorResponse => {
-  if (responseStatus !== 200 && 'error' in response) {
-    return OpenAIErrorResponseTransform(response, provider ?? OPEN_AI);
-  }
+  const read = readProviderResponse(response, responseStatus, provider ?? OPEN_AI);
 
-  return response;
+  return read.kind === 'failure' ? read.error : (read.body as Response);
 };

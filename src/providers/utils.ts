@@ -1,3 +1,4 @@
+import { parseJson } from '../utils/parseJson';
 import { ANTHROPIC_STOP_REASON } from './anthropic/types';
 import { ErrorResponse, FINISH_REASON, PROVIDER_FINISH_REASON } from './types';
 import { AnthropicFinishReasonMap, finishReasonMap } from './utils/finishReasonMap';
@@ -35,6 +36,107 @@ export const generateErrorResponse: (
     },
     provider: provider,
   } as ErrorResponse;
+};
+
+const isObject = (value: unknown): value is Record<string, any> =>
+  typeof value === 'object' && value !== null;
+
+/**
+ * A body read as either the answer or the failure it turned out to be.
+ *
+ * The distinction cannot be drawn from the status alone: a payload the provider
+ * mislabelled arrives wrapped whatever the status, and the answer inside it is
+ * only reachable after unwrapping.
+ */
+export type ReadProviderResponse =
+  | { kind: 'answer'; body: Record<string, any> }
+  | { kind: 'failure'; error: ErrorResponse };
+
+/**
+ * A failure named in the envelope an OpenAI client reads.
+ *
+ * The one shape handled before this was a non-200 body carrying `error`.
+ * Everything else reached the caller as the upstream wrote it — a FastAPI
+ * `{"detail": ...}`, an HTML page from whatever sits in front of the API, a
+ * bare string. A client reads `error.message` off each of those and finds
+ * `undefined`, so a request that failed for a stated reason arrives carrying no
+ * reason at all.
+ */
+export const readProviderResponse: (
+  response: Record<string, any>,
+  responseStatus: number,
+  provider: string,
+) => ReadProviderResponse = (response, responseStatus, provider) => {
+  const failure = (message: string, type: string | null = null, code: string | null = null) => ({
+    kind: 'failure' as const,
+    error: generateErrorResponse({ message, type, param: null, code }, provider),
+  });
+
+  // Read before the status is considered: a provider that mislabelled its
+  // content type sends the whole payload down the text path, and a 200 wrapped
+  // this way is no more readable than a 500 is.
+  if ('html-message' in response) {
+    const text = response['html-message'] ?? '';
+    let parsed: unknown;
+
+    try {
+      parsed = parseJson(text);
+    } catch {
+      parsed = null;
+    }
+
+    // Not JSON after all — an HTML error page from something in front of the
+    // API, most likely. The text is all there is to report.
+    if (!isObject(parsed)) return failure(text);
+
+    // Reported as a bare string rather than an object. Spreading that yields a
+    // message of `undefined`, so the whole body is reported instead of a word
+    // that says nothing.
+    if ('error' in parsed && !isObject(parsed.error)) return failure(text);
+
+    return readProviderResponse(parsed, responseStatus, provider);
+  }
+
+  if (responseStatus === 200) return { kind: 'answer', body: response };
+
+  if (isObject(response.error)) {
+    const { message, type, param, code } = response.error;
+
+    // An `error` naming no message says nothing on its own, so the body it came
+    // in is reported instead of the word `undefined`.
+    return typeof message === 'string'
+      ? {
+          kind: 'failure',
+          error: generateErrorResponse(
+            { message, type: type ?? null, param: param ?? null, code: code ?? null },
+            provider,
+          ),
+        }
+      : failure(JSON.stringify(response));
+  }
+
+  // Reported as a bare string. Spreading that names no message at all, which is
+  // how a stated reason became `undefined` on the way out.
+  if (typeof response.error === 'string') {
+    return failure(response.error, null, typeof response.code === 'string' ? response.code : null);
+  }
+
+  // FastAPI's own shape, which several providers serve unaltered — either a
+  // list of validation errors or a bare string.
+  if ('detail' in response && response.detail?.length) {
+    if (!Array.isArray(response.detail)) return failure(String(response.detail));
+
+    const [first] = response.detail;
+    const field = first?.loc?.join('.') ?? '';
+
+    return failure(`${field ? `${field}: ` : ''}${first?.msg}`, first?.type ?? null);
+  }
+
+  if (typeof response.message === 'string') return failure(response.message);
+
+  // A failure in a shape nothing here names. Reported whole rather than
+  // dropped: the caller can read what the provider said even if this cannot.
+  return failure(JSON.stringify(response));
 };
 
 type SplitResult = {
