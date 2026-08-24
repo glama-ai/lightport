@@ -288,9 +288,15 @@ export function createLineSplitter(): TransformStream {
       }
       return;
     },
+    // The last line of a file need not end in a newline, so the line held back
+    // for one goes out here — and goes out encoded, as every line before it
+    // did. Sent as the string it was held as, it reached a reader that decodes
+    // what it is given, which a string is not: the read threw, the catch around
+    // it dropped the line, and the file went to the provider a row short of the
+    // length its upload was signed for, with nothing said.
     flush(controller) {
       if (leftover.trim()) {
-        controller.enqueue(leftover.trim());
+        controller.enqueue(encoder.encode(leftover.trim()));
       }
     },
   });
