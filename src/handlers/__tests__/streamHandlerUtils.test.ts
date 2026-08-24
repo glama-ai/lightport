@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createLineSplitter,
   getFormdataToFormdataStreamTransformer,
   getOctetStreamToOctetStreamTransformer,
 } from '../streamHandlerUtils';
@@ -232,5 +233,45 @@ describe('batch output read in pieces', () => {
 
   it('reads rows ending in a carriage return', async () => {
     expect(await readRows(['{"a":1}\r\n{"b":2}\r\n'])).toEqual(['{"a":1}', '{"b":2}']);
+  });
+});
+
+/**
+ * Feeds the given pieces through the line splitter and answers with whatever it
+ * put out, untouched — the point here being what the pieces are made of, not
+ * only what they say.
+ */
+const splitLines = async (pieces: string[]): Promise<unknown[]> => {
+  const splitter = createLineSplitter();
+  const encoder = new TextEncoder();
+  const writer = splitter.writable.getWriter();
+
+  const written = (async () => {
+    for (const piece of pieces) await writer.write(encoder.encode(piece));
+    await writer.close();
+  })();
+
+  const lines: unknown[] = [];
+  for await (const line of splitter.readable as any) lines.push(line);
+  await written;
+
+  return lines;
+};
+
+describe('a line splitter reading a file that ends without a newline', () => {
+  it('answers the last line as bytes, as it answers every line before it', async () => {
+    // The line held back for a newline that never comes is read at the end of
+    // the stream, and went out as the string it was held as, where every line
+    // before it went out encoded. The upload reading these lines decodes each
+    // one, and a string is not something to decode: the read threw, the catch
+    // around it dropped the line, and the last row of the file never reached
+    // the provider — leaving the body short of the length the upload was
+    // signed for, with nothing said.
+    const lines = await splitLines(['{"a":1}\n{"b":2}']);
+
+    expect(lines.every((line) => line instanceof Uint8Array)).toBe(true);
+
+    const decoder = new TextDecoder();
+    expect(lines.map((line) => decoder.decode(line as Uint8Array))).toEqual(['{"a":1}', '{"b":2}']);
   });
 });
