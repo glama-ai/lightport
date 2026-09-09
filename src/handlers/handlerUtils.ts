@@ -1,4 +1,4 @@
-import { getClientAbortSignal } from '../context/clientAbort';
+import { getClientAbortSignal, runWithClientAbort } from '../context/clientAbort';
 import { GatewayError } from '../errors/GatewayError';
 import { openAiErrorResponse } from '../errors/openAiError';
 import { HEADER_KEYS, POWERED_BY, RESPONSE_HEADER_KEYS, CONTENT_TYPES } from '../globals';
@@ -237,13 +237,59 @@ async function postToProvider(
   // Check for custom request handler (e.g., bedrock AWS signing)
   const requestHandlers = providerConfig.requestHandlers;
   if (requestHandlers && requestHandlers[fn]) {
-    const customResponse = await requestHandlers[fn]!({
-      c,
-      providerOptions: providerOption,
-      requestURL: c.req.url,
-      requestHeaders,
-      requestBody,
-    });
+    // The provider call the timeout is meant to bound happens inside the custom
+    // handler, reached through externalServiceFetch like every other outbound
+    // request. That transport only picks the caller's abort signal up
+    // ambiently, so a requestTimeout set here never reached these handlers, and
+    // a file or batch call to a wedged provider hung with no deadline at all.
+    // Fold the timeout into the same ambient signal, and tell a timeout apart
+    // from a caller hangup the way the main path below does.
+    const customRequestTimeout =
+      Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) ||
+      providerOption.requestTimeout ||
+      null;
+
+    const invokeRequestHandler = () =>
+      requestHandlers[fn]!({
+        c,
+        providerOptions: providerOption,
+        requestURL: c.req.url,
+        requestHeaders,
+        requestBody,
+      });
+
+    let customResponse: Response;
+    if (customRequestTimeout) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), customRequestTimeout);
+      const clientSignal = getClientAbortSignal();
+      const combinedSignal = clientSignal
+        ? AbortSignal.any([clientSignal, controller.signal])
+        : controller.signal;
+
+      try {
+        customResponse = await runWithClientAbort(combinedSignal, invokeRequestHandler);
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          throw err;
+        }
+
+        // A caller hanging up is left to propagate to tryPost's guard; only a
+        // timeout the caller is still waiting on is dressed up as a 408.
+        if (getClientAbortSignal()?.aborted) {
+          throw err;
+        }
+
+        customResponse = openAiErrorResponse(
+          { message: 'Request timed out', type: 'timeout_error' },
+          408,
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } else {
+      customResponse = await invokeRequestHandler();
+    }
 
     const { response: mappedResponse } = await responseHandler(
       c,
