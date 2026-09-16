@@ -10,6 +10,7 @@ export interface AgentConfig {
 }
 
 let httpsAgent: UndiciAgent | undefined;
+let tlsConfig: AgentConfig['tls'] | undefined;
 
 const proxyAgentCache = new Map<string, ProxyAgent>();
 
@@ -72,6 +73,7 @@ export function getProxyAgent(proxyUrl: string): ProxyAgent {
       // even where a direct one could.
       uri: proxyUrl,
       ...resolveTransportTimeouts(),
+      ...(tlsConfig ? { requestTls: tlsConfig } : {}),
     });
 
     proxyAgentCache.set(proxyUrl, agent);
@@ -111,5 +113,7 @@ export function getHttpsAgent(): UndiciAgent {
 }
 
 export function buildAgents(agentConfig: AgentConfig) {
+  tlsConfig = agentConfig.tls;
   httpsAgent = createHttpsAgent(agentConfig);
+  proxyAgentCache.clear();
 }
