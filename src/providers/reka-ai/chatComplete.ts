@@ -101,13 +101,6 @@ export const RekaAIChatCompleteConfig: ProviderConfig = {
   },
   stop: {
     param: 'stop_words',
-    transform: (params: Params) => {
-      if (params.stop && !Array.isArray(params.stop)) {
-        return [params.stop];
-      }
-
-      return params.stop;
-    },
   },
   seed: {
     param: 'random_seed',
