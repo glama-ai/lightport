@@ -48,12 +48,6 @@ export const CohereChatCompleteConfig: ProviderConfig = {
   stop: {
     param: 'stop_sequences',
     required: false,
-    transform: (params: Params) => {
-      if (typeof params.stop === 'string') {
-        return [params.stop];
-      }
-      return params.stop;
-    },
   },
   temperature: {
     param: 'temperature',

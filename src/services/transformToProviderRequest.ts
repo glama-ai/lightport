@@ -207,6 +207,16 @@ const transformToProviderRequestBody = (
 };
 
 /**
+ * OpenAI accepts `stop` as a string or string[]. Providers whose native field is
+ * an array of stop sequences (Anthropic `stop_sequences`, Gemini/Bedrock/AI21/PaLM
+ * `stopSequences`, Cohere `stop_sequences`) reject a bare string with a 400, while
+ * OpenAI-compatible providers accept either. Normalizing a single string to a
+ * one-element array once, here, keeps every provider config free of that concern.
+ */
+export const normalizeStopParam = (params: Params): Params =>
+  typeof params.stop === 'string' ? { ...params, stop: [params.stop] } : params;
+
+/**
  * Transforms the request parameters to the format expected by the provider.
  *
  * @param {string} provider - The name of the provider (e.g., 'openai', 'anthropic').
@@ -251,6 +261,10 @@ const transformToProviderRequest = (
   if (fn === 'proxy') {
     return params;
   }
+
+  // Config- and FormData-mapped providers receive `stop` as the array their
+  // native APIs require (proxy/upload/stream paths above are passed through as-is).
+  params = normalizeStopParam(params);
 
   const providerAPIConfig = ProviderConfigs[provider].api;
   if (

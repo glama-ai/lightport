@@ -208,12 +208,6 @@ export const OracleChatDetailsConfig: ProviderConfig = {
   },
   stop: {
     param: 'stop',
-    transform: (params: Params) => {
-      if (params.stop && !Array.isArray(params.stop)) {
-        return [params.stop];
-      }
-      return params.stop;
-    },
   },
   // oracle specific
   compartment_id: {
