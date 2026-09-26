@@ -84,10 +84,9 @@ const PROVIDERS: ProviderEntry[] = [
   },
   {
     provider: 'empiriolabs',
-    // Named from the house that made it, as this aggregator's catalogue does.
-    // Unconfirmed against a live key — nobody here has one — so the first run
-    // that does have one settles it.
-    model: 'gpt-4o-mini',
+    // Named from the house that made it, as this catalogue does. Confirmed
+    // against a live key: gpt-4o-mini is not an id EmpirioLabs serves.
+    model: 'qwen3-7-max',
     env: { EMPIRIOLABS_API_KEY: '' },
   },
   {
