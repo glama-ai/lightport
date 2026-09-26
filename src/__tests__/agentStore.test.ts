@@ -29,6 +29,22 @@ const optionsOf = (agent: UndiciAgent): Record<string, unknown> => {
   return (agent as unknown as Record<symbol, Record<string, unknown>>)[symbol!];
 };
 
+/**
+ * ProxyAgent stores requestTls under its own internal symbol.
+ */
+const requestTlsOf = (agent: ProxyAgent): Record<string, unknown> | undefined => {
+  const symbol = Object.getOwnPropertySymbols(agent).find(
+    (candidate) => candidate.description === 'request tls settings',
+  );
+
+  expect(
+    symbol,
+    'undici no longer exposes Symbol(request tls settings); re-check how TLS is applied to ProxyAgent',
+  ).toBeDefined();
+
+  return (agent as unknown as Record<symbol, Record<string, unknown> | undefined>)[symbol!];
+};
+
 describe('getHttpsAgent', () => {
   it('returns a dispatcher when buildAgents was never called', () => {
     expect(getHttpsAgent()).toBeInstanceOf(UndiciAgent);
@@ -83,14 +99,29 @@ describe('getProxyAgent', () => {
     expect(getProxyAgent('http://127.0.0.1:3128')).toBe(agent);
     expect(getProxyAgent('http://127.0.0.1:3129')).not.toBe(agent);
   });
+
+  it('passes the configured client TLS through to the request endpoint', () => {
+    buildAgents({ tls: { cert: 'cert', key: 'key' } });
+
+    const agent = getProxyAgent('http://127.0.0.1:3131');
+
+    expect(requestTlsOf(agent)).toMatchObject({ cert: 'cert', key: 'key' });
+  });
+
+  it('drops stale proxy dispatchers after buildAgents', () => {
+    buildAgents({});
+
+    const staleAgent = getProxyAgent('http://127.0.0.1:3132');
+    expect(requestTlsOf(staleAgent)).toBeUndefined();
+
+    buildAgents({ tls: { cert: 'cert', key: 'key' } });
+
+    const freshAgent = getProxyAgent('http://127.0.0.1:3132');
+    expect(freshAgent).not.toBe(staleAgent);
+    expect(requestTlsOf(freshAgent)).toMatchObject({ cert: 'cert', key: 'key' });
+  });
 });
 
-/**
- * The precedence rules, tested directly against synthetic env objects rather
- * than through `getHttpsAgent`: `Environment()` snapshots `process.env` at
- * import time (see the note above), so there is no way to vary these inputs
- * against the real dispatcher from inside a running test.
- */
 describe('resolveTransportTimeoutsFrom', () => {
   it('falls back to the headers-timeout floor and leaves bodyTimeout to undici when nothing is configured', () => {
     expect(resolveTransportTimeoutsFrom({})).toEqual({ headersTimeout: 120_000 });
