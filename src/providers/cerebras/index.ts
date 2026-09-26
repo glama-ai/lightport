@@ -9,18 +9,9 @@ export const cerebrasProviderAPIConfig = defineOpenAICompatibleProvider({
     chatComplete: {
       path: '/v1/chat/completions',
       defaultModel: null,
-      exclude: [
-        'frequency_penalty',
-        'logit_bias',
-        'logprobs',
-        'presence_penalty',
-        'parallel_tool_calls',
-        'service_tier',
-      ],
     },
-    // Cerebras documents the parameters its completions endpoint takes, and
-    // these are the ones it leaves out. `logprobs` is excluded from chat above
-    // and named among them here, so the two lists differ on purpose.
+    // Chat and text completions expose different parameter sets. These are the
+    // OpenAI text-completion parameters Cerebras leaves out.
     complete: {
       path: '/v1/completions',
       defaultModel: null,
