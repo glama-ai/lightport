@@ -18,6 +18,7 @@ const providers = [
   ['hyperbolic', 'https://api.hyperbolic.xyz/v1/completions'],
   ['sambanova', 'https://api.sambanova.ai/v1/completions'],
   ['nscale', 'https://inference.api.nscale.com/v1/completions'],
+  ['flexai', 'https://api.flex.ai/v1/completions'],
 ] as const;
 
 // What each provider does not take on `/completions`, and so must not be sent.
@@ -26,6 +27,7 @@ const excluded: Record<string, string[]> = {
   hyperbolic: [],
   sambanova: ['presence_penalty', 'frequency_penalty', 'user', 'logprobs'],
   nscale: ['user'],
+  flexai: ['suffix'],
 };
 
 // Every parameter a caller might send, so that anything not excluded is proven

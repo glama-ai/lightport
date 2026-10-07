@@ -113,6 +113,12 @@ const PROVIDERS: ProviderEntry[] = [
     env: { SCX_AI_API_KEY: '' },
   },
   {
+    provider: 'flexai',
+    model: 'DeepSeek-V4-Flash-0731',
+    responsesModel: 'DeepSeek-V4-Flash-0731',
+    env: { FLEXAI_API_KEY: '' },
+  },
+  {
     provider: 'x-ai',
     model: 'grok-3-mini-fast',
     env: { XAI_API_KEY: '' },

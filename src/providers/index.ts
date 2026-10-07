@@ -19,6 +19,7 @@ import DeepInfraConfig from './deepinfra';
 import DeepSeekAPIConfig from './deepseek';
 import { FeatherlessAIConfig } from './featherless-ai';
 import FireworksAIConfig from './fireworks-ai';
+import FlexAIConfig from './flexai';
 import GoogleConfig from './google';
 import VertexConfig from './google-vertex-ai';
 import GroqConfig from './groq';
@@ -158,6 +159,7 @@ const Providers: { [key: string]: ProviderConfigs } = {
   empiriolabs: EmpirioLabsConfig,
   saladcloud: SaladCloudConfig,
   'scx-ai': SCXAIConfig,
+  flexai: FlexAIConfig,
   pinecone: PineconeConfig,
 };
 

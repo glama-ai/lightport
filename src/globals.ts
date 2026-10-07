@@ -109,6 +109,7 @@ export const REQUESTY: string = 'requesty';
 export const PINECONE: string = 'pinecone';
 export const EMPIRIOLABS: string = 'empiriolabs';
 export const SCX_AI: string = 'scx-ai';
+export const FLEXAI: string = 'flexai';
 
 
 export const CONTENT_TYPES = {
