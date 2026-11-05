@@ -124,6 +124,39 @@ export const SYSTEM_INSTRUCTION_DISABLED_MODELS = [
   'gemini-pro-vision',
 ];
 
+/**
+ * The text of a message's content, as Gemini parts. Empty text is left out:
+ * Gemini refuses a part with nothing in it.
+ */
+export const geminiTextParts = (content: Message['content']): { text: string }[] => {
+  if (typeof content === 'string') return content ? [{ text: content }] : [];
+  if (!Array.isArray(content)) return [];
+
+  return content
+    .filter((part) => part.type === 'text' && part.text)
+    .map((part) => ({ text: part.text as string }));
+};
+
+/**
+ * Every system and developer message, as the one instruction Gemini takes.
+ *
+ * Only the first message was read, and of it only the first part, while every
+ * system message was kept out of the conversation — so an instruction given
+ * anywhere else was dropped without a word. That is any later system or
+ * developer message, and a Responses request with both \`instructions\` and a
+ * developer item among its input. Gemini has no system turn to put one in
+ * where it fell, so all of them are gathered here, in the order they came.
+ */
+export const transformGeminiSystemInstruction = (params: Params) => {
+  if (SYSTEM_INSTRUCTION_DISABLED_MODELS.includes(params.model as string)) return;
+
+  const parts = (params.messages ?? [])
+    .filter((message) => SYSTEM_MESSAGE_ROLES.includes(message.role))
+    .flatMap((message) => geminiTextParts(message.content));
+
+  return parts.length ? { parts, role: 'system' } : undefined;
+};
+
 export type GoogleMessageRole = 'user' | 'model' | 'system';
 
 interface GoogleFunctionCallMessagePart {
@@ -237,6 +270,9 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
           let parts = [];
 
           if (message.role === 'assistant' && message.tool_calls) {
+            // What the turn said before it called, which was dropped: only the
+            // calls were sent, so the model lost its own account of why.
+            parts.push(...geminiTextParts(message.content));
             message.tool_calls.forEach((tool_call: ToolCall) => {
               const thought_signature = getThoughtSignature(
                 params.model,
@@ -365,45 +401,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
     {
       param: 'systemInstruction',
       default: '',
-      transform: (params: Params) => {
-        // systemInstruction is only supported from gemini 1.5 models
-        if (SYSTEM_INSTRUCTION_DISABLED_MODELS.includes(params.model as string)) return;
-
-        const firstMessage = params.messages?.[0] || null;
-
-        if (!firstMessage) return;
-
-        if (
-          SYSTEM_MESSAGE_ROLES.includes(firstMessage.role) &&
-          typeof firstMessage.content === 'string'
-        ) {
-          return {
-            parts: [
-              {
-                text: firstMessage.content,
-              },
-            ],
-            role: 'system',
-          };
-        }
-
-        if (
-          SYSTEM_MESSAGE_ROLES.includes(firstMessage.role) &&
-          typeof firstMessage.content === 'object' &&
-          firstMessage.content?.[0]?.text
-        ) {
-          return {
-            parts: [
-              {
-                text: firstMessage.content?.[0].text,
-              },
-            ],
-            role: 'system',
-          };
-        }
-
-        return;
-      },
+      transform: (params: Params) => transformGeminiSystemInstruction(params),
     },
   ],
   temperature: {

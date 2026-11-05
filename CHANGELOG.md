@@ -479,3 +479,10 @@ that answered and said nothing:
   caller asking for strict compliance, the default, is not sent. Such a caller
   got none of it, streamed or not. It is now in `reasoning_content` as well,
   where every other provider here reports thinking, under either setting.
+- Gemini, on Google and Vertex, read only the first message as its system
+  instruction, and only that message's first part, while keeping every system
+  message out of the conversation — so any later system or developer message was
+  dropped without a word. That includes a Responses request with `instructions`
+  and a developer item, as Codex sends. Every system and developer message is now
+  gathered into the instruction, in order. An assistant turn's text, sent beside
+  its `tool_calls`, was dropped too, and now goes ahead of the calls.

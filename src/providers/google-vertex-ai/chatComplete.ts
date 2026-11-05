@@ -20,6 +20,8 @@ import {
   GoogleToolConfig,
   SYSTEM_INSTRUCTION_DISABLED_MODELS,
   TOOL_RESULT_ROLES,
+  geminiTextParts,
+  transformGeminiSystemInstruction,
   transformOpenAIRoleToGoogleRole,
   transformToolChoiceForGemini,
 } from '../google/chatComplete';
@@ -80,6 +82,9 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
           let parts = [];
 
           if (message.role === 'assistant' && message.tool_calls) {
+            // What the turn said before it called, which was dropped: only the
+            // calls were sent, so the model lost its own account of why.
+            parts.push(...geminiTextParts(message.content));
             message.tool_calls.forEach((tool_call: ToolCall) => {
               const thought_signature = getThoughtSignature(
                 params.model,
@@ -216,43 +221,7 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
     {
       param: 'systemInstruction',
       default: '',
-      transform: (params: Params) => {
-        // systemInstruction is only supported from gemini 1.5 models
-        if (SYSTEM_INSTRUCTION_DISABLED_MODELS.includes(params.model as string)) return;
-        const firstMessage = params.messages?.[0] || null;
-        if (!firstMessage) return;
-
-        if (
-          SYSTEM_MESSAGE_ROLES.includes(firstMessage.role) &&
-          typeof firstMessage.content === 'string'
-        ) {
-          return {
-            parts: [
-              {
-                text: firstMessage.content,
-              },
-            ],
-            role: 'system',
-          };
-        }
-
-        if (
-          SYSTEM_MESSAGE_ROLES.includes(firstMessage.role) &&
-          typeof firstMessage.content === 'object' &&
-          firstMessage.content?.[0]?.text
-        ) {
-          return {
-            parts: [
-              {
-                text: firstMessage.content?.[0].text,
-              },
-            ],
-            role: 'system',
-          };
-        }
-
-        return;
-      },
+      transform: (params: Params) => transformGeminiSystemInstruction(params),
     },
   ],
   temperature: {
