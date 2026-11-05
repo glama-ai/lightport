@@ -382,17 +382,15 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
         // Transform the chat messages into a simple prompt
         if (params.messages) {
           params.messages.forEach((msg: Message & PromptCache) => {
-            if (
-              SYSTEM_MESSAGE_ROLES.includes(msg.role) &&
-              msg.content &&
-              typeof msg.content === 'object' &&
-              // An empty array has no first element, and reading through it threw.
-              // `content` is the caller's to write, so a system message sent as
-              // `[]` — which an SDK building content up from nothing will produce
-              // — came back as a 500 saying only that something had gone wrong.
-              msg.content[0]?.text
-            ) {
+            if (SYSTEM_MESSAGE_ROLES.includes(msg.role) && Array.isArray(msg.content)) {
+              // Each block is read for itself. Whether to read any was decided by
+              // the first alone, so a prompt opening with an empty block was
+              // dropped whole, and one holding an image beside its text sent a
+              // block with no text, which Anthropic refuses. Only text belongs in
+              // a system prompt, and Anthropic will not take it empty.
               msg.content.forEach((_msg) => {
+                if (typeof _msg.text !== 'string' || !_msg.text) return;
+
                 systemMessages.push({
                   text: _msg.text,
                   type: 'text',
@@ -401,7 +399,11 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
                   }),
                 });
               });
-            } else if (SYSTEM_MESSAGE_ROLES.includes(msg.role) && typeof msg.content === 'string') {
+            } else if (
+              SYSTEM_MESSAGE_ROLES.includes(msg.role) &&
+              typeof msg.content === 'string' &&
+              msg.content
+            ) {
               systemMessages.push({
                 ...(msg?.cache_control && {
                   cache_control: msg.cache_control,

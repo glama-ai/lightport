@@ -502,3 +502,8 @@ that answered and said nothing:
   o-series — as `maxTokens`, which OCI refuses for them in favour of
   `maxCompletionTokens`, so any such request with a limit failed. Their limit is
   now sent under the name OCI reads.
+- A system message written as blocks was read only if its first block had text,
+  so one opening with an empty block lost the whole prompt on Anthropic, Vertex
+  and Azure. One holding an image beside its text sent a block with no text,
+  which Anthropic refuses. Each block is now read for itself, text kept and the
+  rest left out, and an empty prompt sends nothing rather than an empty block.
