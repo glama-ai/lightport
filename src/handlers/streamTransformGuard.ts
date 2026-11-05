@@ -40,9 +40,10 @@ const carriesError = (transformed: unknown): boolean => {
  * What this does not reach: a failure is recognised by its `data:` frame, which
  * covers the SSE-shaped upstreams and so most of the catalogue. Bedrock's
  * event-stream payloads and Cohere's JSONL arrive as bare JSON carrying no frame
- * to read, and a failure either reports mid-stream is still lost the way it
- * always was. Closing that needs a reader per wire format rather than anything
- * available from here.
+ * to read. Bedrock's reader names an exception from the headers it came with and
+ * its transform raises it; a failure Cohere reports mid-stream is still lost the
+ * way it always was. Closing that needs a reader per wire format rather than
+ * anything available from here.
  */
 export const guardStreamTransform =
   (transform: Function, provider: string) =>

@@ -10,6 +10,7 @@ import {
   ToolChoiceObject,
 } from '../../types/requestBody';
 import { GatewayError } from '../../errors/GatewayError';
+import { openAiErrorEvent } from '../../errors/openAiError';
 import { parseJson } from '../../utils/parseJson';
 import {
   ChatCompletionResponse,
@@ -43,7 +44,6 @@ import {
 } from '../utils/filePart';
 import { getCachePoint } from './utils/cachePoint';
 import {
-  getBedrockErrorChunk,
   transformAdditionalModelRequestFields,
   transformAI21AdditionalModelRequestFields,
   transformAnthropicAdditionalModelRequestFields,
@@ -597,8 +597,16 @@ export const BedrockChatCompleteStreamChunkTransform: (
   gatewayRequest,
 ) => {
   const parsedChunk: BedrockChatCompleteStreamChunk = parseJson(responseChunk);
+  // An exception Bedrock sends mid-stream — a throttle, a refused image, a model
+  // that failed — was answered with a chunk finishing as `stop` and a `[DONE]`,
+  // its message thrown away: to the caller, a reply that had simply ended there.
+  // It is a failure, and leaves as one, named as Bedrock named it.
   if (parsedChunk.message) {
-    return getBedrockErrorChunk(fallbackId, gatewayRequest.model || '');
+    return openAiErrorEvent({
+      code: parsedChunk.__type ?? null,
+      message: `${BEDROCK} error: ${parsedChunk.message}`,
+      type: parsedChunk.__type ?? 'api_error',
+    });
   }
   if (parsedChunk.stopReason) {
     streamState.stopReason = parsedChunk.stopReason;

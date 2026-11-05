@@ -1,4 +1,3 @@
-import { BEDROCK } from '../../globals';
 import { logger } from '../../logger';
 import { requestCache } from '../../services/cache/cacheService';
 import { Options, Tool } from '../../types/requestBody';
@@ -650,28 +649,6 @@ export const getFoundationModelFromInferenceProfile = async (
   } catch (error) {
     logger.debug({ err: error }, 'error mapping inference profile to foundation model');
   }
-};
-
-export const getBedrockErrorChunk = (id: string, model: string) => {
-  return [
-    `data: ${JSON.stringify({
-      id,
-      object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
-      model: model,
-      provider: BEDROCK,
-      choices: [
-        {
-          index: 0,
-          delta: {
-            role: 'assistant',
-            finish_reason: 'stop',
-          },
-        },
-      ],
-    })}\n\n`,
-    `data: [DONE]\n\n`,
-  ];
 };
 
 export function getS3EncryptionHeaders(env: Record<string, any>) {

@@ -468,3 +468,9 @@ that answered and said nothing:
   is now read as the end, and one `[DONE]` is sent. A chunk with no choices,
   which a deep-research model streams while it searches, no longer throws, and a
   chunk that has not finished says `finish_reason: null` as OpenAI's do.
+- An exception Bedrock sent mid-stream — a throttle, a refused image, a model
+  that failed — ended the stream as a finished reply: a chunk with
+  `finish_reason: stop`, a `[DONE]`, and the message thrown away. It now reaches
+  the caller as an error frame carrying Bedrock's message, with the exception's
+  name, read from the event-stream headers it arrived with, as its `type` and
+  `code`.
