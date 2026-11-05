@@ -66,17 +66,24 @@ export async function responseHandler(
   // so it is exempt from the check rather than caught by it.
   const isStreamingResponse = streamingMode && (isCacheHit || upstreamStreamed);
 
+  let providerOptions = {} as Options;
   if (typeof provider == 'object') {
+    providerOptions = provider;
     provider = provider.provider || '';
   }
 
   const providerConfig = Providers[provider];
   let providerTransformers = Providers[provider]?.responseTransforms;
 
+  // Read with the options the request was sent with. A provider can choose its
+  // transforms by them — Azure AI by whether its Foundry URL names an Anthropic
+  // deployment — and read with none it chose as though there were nothing to
+  // choose by: a Claude deployment's request went out in Anthropic's shape and
+  // its answer was read as Azure's own, reaching the caller unreadable.
   if (providerConfig?.getConfig) {
     providerTransformers = providerConfig.getConfig({
       params: gatewayRequest,
-      providerOptions: {} as Options,
+      providerOptions,
     }).responseTransforms;
   }
 

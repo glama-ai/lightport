@@ -538,3 +538,9 @@ that answered and said nothing:
   and was sent as `X-API-Key`, which Anthropic refuses, without the beta that has
   Anthropic read it as a token. It is now sent as a bearer token with
   `oauth-2025-04-20` added to the caller's betas.
+- A Claude deployment on Azure AI Foundry was sent its request in Anthropic's
+  shape and had its answer read as Azure's own, so the caller got an unreadable
+  completion, streamed or not. The response transforms were chosen with no
+  provider options, and Azure AI chooses them by whether its Foundry URL names an
+  Anthropic deployment. They are now chosen with the options the request was
+  sent with.
