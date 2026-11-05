@@ -861,6 +861,20 @@ export const BedrockConverseAI21ChatCompleteConfig: ProviderConfig = {
   },
 };
 
+/**
+ * A message's content as the text of a prompt, for the models that take one
+ * string rather than messages. The system message was written as the whole
+ * message list, `[object Object],[object Object]`, and content sent as parts
+ * as `[object Object]` wherever it came.
+ */
+const promptText = (content: Message['content']): string =>
+  Array.isArray(content)
+    ? content
+        .map((part) => (part.type === 'text' ? part.text : ''))
+        .filter(Boolean)
+        .join('\n')
+    : (content ?? '');
+
 export const BedrockCohereChatCompleteConfig: ProviderConfig = {
   messages: {
     param: 'prompt',
@@ -871,13 +885,13 @@ export const BedrockCohereChatCompleteConfig: ProviderConfig = {
         let messages: Message[] = params.messages;
         messages.forEach((msg, index) => {
           if (index === 0 && SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
-            prompt += `system: ${messages}\n`;
+            prompt += `system: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'user') {
-            prompt += `user: ${msg.content}\n`;
+            prompt += `user: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'assistant') {
-            prompt += `assistant: ${msg.content}\n`;
+            prompt += `assistant: ${promptText(msg.content)}\n`;
           } else {
-            prompt += `${msg.role}: ${msg.content}\n`;
+            prompt += `${msg.role}: ${promptText(msg.content)}\n`;
           }
         });
         prompt += 'Assistant:';
@@ -1067,13 +1081,13 @@ export const BedrockAI21ChatCompleteConfig: ProviderConfig = {
         let messages: Message[] = params.messages;
         messages.forEach((msg, index) => {
           if (index === 0 && SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
-            prompt += `system: ${messages}\n`;
+            prompt += `system: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'user') {
-            prompt += `user: ${msg.content}\n`;
+            prompt += `user: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'assistant') {
-            prompt += `assistant: ${msg.content}\n`;
+            prompt += `assistant: ${promptText(msg.content)}\n`;
           } else {
-            prompt += `${msg.role}: ${msg.content}\n`;
+            prompt += `${msg.role}: ${promptText(msg.content)}\n`;
           }
         });
         prompt += 'Assistant:';

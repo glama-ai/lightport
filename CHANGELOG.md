@@ -526,3 +526,7 @@ that answered and said nothing:
   among others — rather than in the error envelope every other failure arrives
   in. Both bring a transformer for their answers, which handed failures back
   untouched; a failure is now left to the shared reader.
+- The prompt sent to Bedrock's legacy Cohere and AI21 models opened with
+  `system: [object Object],[object Object]` — the message list rather than the
+  system message — and any message sent as parts read `[object Object]`. Both are
+  now their text.
