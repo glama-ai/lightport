@@ -423,3 +423,10 @@ that answered and said nothing:
   model in the body where the router reads it. The router serves chat
   completions alone, so a text completion without a base URL is refused with a
   `400` naming the setting that would serve it.
+- AI21 failed every request. Chat went to `/{model}/chat` with Jurassic-2's
+  parameter names and was read back expecting Jurassic-2's `outputs`; that path
+  answers 404, as do the `/{model}/complete` and `/embed` it also claimed. Jamba
+  is served at `/v1/chat/completions` in OpenAI's shape, and AI21 is now declared
+  on the shared base against it, sending the parameters AI21 documents and its
+  own `documents`. Text completions are refused with a `400` rather than sent
+  where they 404.
