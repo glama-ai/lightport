@@ -27,5 +27,7 @@ const NATIVE_PROVIDERS = new Set(['openai', 'azure-openai', 'openrouter']);
 export function supportsResponsesApiNatively(provider: string): boolean {
   const name = provider?.toLowerCase() || '';
 
-  return NATIVE_PROVIDERS.has(name) || Boolean((Providers as Record<string, any>)[name]?.nativeResponses);
+  return (
+    NATIVE_PROVIDERS.has(name) || Boolean((Providers as Record<string, any>)[name]?.nativeResponses)
+  );
 }

@@ -36,10 +36,7 @@ describe('a failure the provider did not write in OpenAI shape', () => {
     // What an `application/problem+json` failure looks like — RFC 7807. Served
     // verbatim by more than one provider, and unreadable to an OpenAI client
     // until it is named.
-    const answer = chatComplete()(
-      { status: 401, title: 'Unauthorized', type: 'about:blank' },
-      401,
-    );
+    const answer = chatComplete()({ status: 401, title: 'Unauthorized', type: 'about:blank' }, 401);
 
     expect(answer.error.message).toBe('testprovider error: Unauthorized');
     expect(answer.error.code).toBe('401');
@@ -193,7 +190,9 @@ describe('an answer in a shape the caller cannot use', () => {
 describe("a reasoning model's thinking", () => {
   const reasoned = {
     id: 'x',
-    choices: [{ message: { role: 'assistant', content: 'four', reasoning_content: 'two plus two' } }],
+    choices: [
+      { message: { role: 'assistant', content: 'four', reasoning_content: 'two plus two' } },
+    ],
   };
 
   it('is given the shape the Responses adapter reads', () => {
@@ -215,7 +214,12 @@ describe("a reasoning model's thinking", () => {
   });
 
   it('says nothing when the model did no thinking', () => {
-    const answer = chatComplete()({ id: 'x', choices: [{ message: { content: 'hi' } }] }, 200, undefined, false);
+    const answer = chatComplete()(
+      { id: 'x', choices: [{ message: { content: 'hi' } }] },
+      200,
+      undefined,
+      false,
+    );
 
     expect(answer.choices[0].message.content_blocks).toBeUndefined();
   });

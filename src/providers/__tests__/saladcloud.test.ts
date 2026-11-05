@@ -12,10 +12,13 @@ const complete = (response: Record<string, unknown>, status = 200, strict = true
   saladcloud.responseTransforms.chatComplete(response, status, new Headers(), strict);
 
 const sent = (params: Partial<Params>) =>
-  transformUsingProviderConfig(saladcloud.chatComplete as ProviderConfig, {
-    messages: [{ role: 'user', content: 'hi' }],
-    ...params,
-  } as Params);
+  transformUsingProviderConfig(
+    saladcloud.chatComplete as ProviderConfig,
+    {
+      messages: [{ role: 'user', content: 'hi' }],
+      ...params,
+    } as Params,
+  );
 
 describe('saladcloud is reachable', () => {
   it('is registered and allowed as a provider', () => {
@@ -67,7 +70,11 @@ describe('what saladcloud is sent', () => {
   });
 
   it('holds back the OpenAI-only parameters it does not', () => {
-    const request = sent({ service_tier: 'auto', store: true, verbosity: 'high' } as Partial<Params>);
+    const request = sent({
+      service_tier: 'auto',
+      store: true,
+      verbosity: 'high',
+    } as Partial<Params>);
 
     expect(request).not.toHaveProperty('service_tier');
     expect(request).not.toHaveProperty('store');

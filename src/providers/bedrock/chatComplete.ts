@@ -326,17 +326,16 @@ export const BedrockConverseChatCompleteConfig: ProviderConfig = {
       required: false,
       transform: (params: BedrockChatCompletionsParams) => {
         if (!params.messages) return;
-        const systemMessages: Array<{ text: string } | BedrockCachePoint> =
-          params.messages.reduce(
-            (acc: Array<{ text: string } | BedrockCachePoint>, msg) => {
-              if (SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
-                const content = getMessageTextContentArray(msg);
-                return acc.concat(...content);
-              }
-              return acc;
-            },
-            [],
-          );
+        const systemMessages: Array<{ text: string } | BedrockCachePoint> = params.messages.reduce(
+          (acc: Array<{ text: string } | BedrockCachePoint>, msg) => {
+            if (SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
+              const content = getMessageTextContentArray(msg);
+              return acc.concat(...content);
+            }
+            return acc;
+          },
+          [],
+        );
         if (!systemMessages.length) return;
         return systemMessages;
       },

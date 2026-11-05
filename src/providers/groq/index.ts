@@ -1,5 +1,9 @@
 import { GROQ } from '../../globals';
-import { createModelResponseParams, createSpeechParams, responseTransformers } from '../open-ai-base';
+import {
+  createModelResponseParams,
+  createSpeechParams,
+  responseTransformers,
+} from '../open-ai-base';
 import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 import { GroqChatCompleteStreamChunkTransform } from './chatComplete';
 
@@ -29,7 +33,14 @@ export default {
   createSpeech: createSpeechParams([]),
   api: {
     ...GroqConfig.api,
-    headers: ({ providerOptions, fn }: { providerOptions: any; fn: string; [key: string]: any }) => ({
+    headers: ({
+      providerOptions,
+      fn,
+    }: {
+      providerOptions: any;
+      fn: string;
+      [key: string]: any;
+    }) => ({
       ...(providerOptions.apiKey && { Authorization: `Bearer ${providerOptions.apiKey}` }),
       ...(['createTranscription', 'createTranslation'].includes(fn) && {
         'Content-Type': 'multipart/form-data',

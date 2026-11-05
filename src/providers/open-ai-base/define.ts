@@ -62,10 +62,9 @@ export interface OpenAICompatibleProvider {
     imageGenerate?: ModelEndpoint;
   };
   /** Headers beyond the bearer token, which is always sent. */
-  headers?: (args: { providerOptions: { apiKey?: string; [key: string]: any } }) => Record<
-    string,
-    string
-  >;
+  headers?: (args: {
+    providerOptions: { apiKey?: string; [key: string]: any };
+  }) => Record<string, string>;
   /**
    * Whether the provider serves `/v1/responses` itself.
    *
@@ -104,7 +103,9 @@ export const defineOpenAICompatibleProvider = (
 
   for (const [fn, endpoint] of Object.entries(endpoints)) {
     if (typeof endpoint.path === 'string' && !endpoint.path.startsWith('/')) {
-      throw new Error(`${name}: the ${fn} path must start with a slash, and is "${endpoint.path}".`);
+      throw new Error(
+        `${name}: the ${fn} path must start with a slash, and is "${endpoint.path}".`,
+      );
     }
   }
 
@@ -157,7 +158,10 @@ export const defineOpenAICompatibleProvider = (
         ...OpenAIImageGenerateConfig,
         // Replaced rather than inherited, as for chat: OpenAI's config defaults
         // this to `dall-e-2`, which no other provider serves.
-        model: { ...OpenAIImageGenerateConfig.model, default: endpoints.imageGenerate.defaultModel ?? undefined },
+        model: {
+          ...OpenAIImageGenerateConfig.model,
+          default: endpoints.imageGenerate.defaultModel ?? undefined,
+        },
         ...endpoints.imageGenerate.extra,
       },
     }),

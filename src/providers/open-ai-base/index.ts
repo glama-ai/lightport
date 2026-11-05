@@ -335,10 +335,15 @@ const upstreamTransformer = <T>(
         ...read.body,
         choices: read.body.choices.map((choice: Record<string, any>) =>
           choice?.message && typeof choice.message === 'object'
-            ? { ...choice, message: { ...choice.message, ...transformReasoning(choice.message, strict) } }
+            ? {
+                ...choice,
+                message: { ...choice.message, ...transformReasoning(choice.message, strict) },
+              }
             : choice,
         ),
-        ...(read.body.usage && { usage: { ...read.body.usage, ...transformUsageDetails(read.body.usage) } }),
+        ...(read.body.usage && {
+          usage: { ...read.body.usage, ...transformUsageDetails(read.body.usage) },
+        }),
       },
       provider,
     );
@@ -399,7 +404,9 @@ export const OpenAIGetModelResponseTransformer = <T extends OpenAIResponse | Err
     responseStatus: number,
   ) => T | ErrorResponse;
 
-export const OpenAIDeleteModelResponseTransformer = <T extends ModelResponseDeleteResponse | ErrorResponse>(
+export const OpenAIDeleteModelResponseTransformer = <
+  T extends ModelResponseDeleteResponse | ErrorResponse,
+>(
   provider: string,
   customTransformer?: CustomTransformer<ModelResponseDeleteResponse, T>,
 ) =>

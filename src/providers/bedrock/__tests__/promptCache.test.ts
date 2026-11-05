@@ -29,9 +29,8 @@ const toolLoop = (toolContent: Message['content']): Params =>
   }) as Params;
 
 const contentOf = (transformed: any, role: string) =>
-  transformed.messages.find((message: any) =>
-    message.content.some((block: any) => role in block),
-  )?.content;
+  transformed.messages.find((message: any) => message.content.some((block: any) => role in block))
+    ?.content;
 
 describe('a tool result the caller asked to checkpoint', () => {
   // `ToolResultContentBlock` is document | image | json | searchResult | text |
@@ -256,9 +255,7 @@ describe('the lifetime a caller asked a checkpoint to live for', () => {
           ],
         },
       ],
-      tools: [
-        { name: 'get_weather', input_schema: { type: 'object' }, cache_control: ttl },
-      ],
+      tools: [{ name: 'get_weather', input_schema: { type: 'object' }, cache_control: ttl }],
     } as unknown as Params;
 
     const transformed: any = transformUsingProviderConfig(BedrockConverseMessagesConfig, params);

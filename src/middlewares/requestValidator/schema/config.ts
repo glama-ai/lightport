@@ -1,10 +1,4 @@
-import {
-  AZURE_OPEN_AI,
-  OLLAMA,
-  GOOGLE_VERTEX_AI,
-  TRITON,
-  HEADER_KEYS,
-} from '../../../globals';
+import { AZURE_OPEN_AI, OLLAMA, GOOGLE_VERTEX_AI, TRITON, HEADER_KEYS } from '../../../globals';
 import type { GatewayContext } from '../../../types/GatewayContext';
 import { Environment } from '../../../utils/env';
 import { z } from 'zod';

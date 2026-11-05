@@ -110,7 +110,6 @@ export const PINECONE: string = 'pinecone';
 export const EMPIRIOLABS: string = 'empiriolabs';
 export const SCX_AI: string = 'scx-ai';
 
-
 export const CONTENT_TYPES = {
   APPLICATION_JSON: 'application/json',
   MULTIPART_FORM_DATA: 'multipart/form-data',

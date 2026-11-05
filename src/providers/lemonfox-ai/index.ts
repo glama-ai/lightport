@@ -42,7 +42,14 @@ export default {
   createTranscription: LemonfoxAIcreateTranscriptionConfig,
   api: {
     ...LemonfoxAIConfig.api,
-    headers: ({ providerOptions, fn }: { providerOptions: any; fn: string; [key: string]: any }) => ({
+    headers: ({
+      providerOptions,
+      fn,
+    }: {
+      providerOptions: any;
+      fn: string;
+      [key: string]: any;
+    }) => ({
       ...(providerOptions.apiKey && { Authorization: `Bearer ${providerOptions.apiKey}` }),
       ...(fn === 'createTranscription' && { 'content-type': 'multipart/form-data' }),
     }),
