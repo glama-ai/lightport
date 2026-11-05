@@ -16,7 +16,9 @@ const GroqConfig = defineOpenAICompatibleProvider({
     chatComplete: {
       path: '/v1/chat/completions',
       defaultModel: null,
-      exclude: ['logprobs', 'logits_bias', 'top_logprobs'],
+      // Groq names all three as taken by none of its models. The second was
+      // spelled `logits_bias`, which excluded nothing, so `logit_bias` was sent.
+      exclude: ['logprobs', 'logit_bias', 'top_logprobs'],
       extra: {
         service_tier: { param: 'service_tier', required: false },
         reasoning_effort: { param: 'reasoning_effort', required: false },

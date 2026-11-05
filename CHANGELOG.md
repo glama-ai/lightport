@@ -547,3 +547,5 @@ that answered and said nothing:
 - A streamed Responses request reported `cached_tokens: 0` and
   `reasoning_tokens: 0` whatever the provider counted, where the same request
   unstreamed reported both. Both are now read from the usage the provider sent.
+- Groq was sent `logit_bias`, which it says none of its models take. The
+  exclusion meant to hold it back was spelled `logits_bias` and excluded nothing.
