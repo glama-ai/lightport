@@ -530,3 +530,7 @@ that answered and said nothing:
   `system: [object Object],[object Object]` — the message list rather than the
   system message — and any message sent as parts read `[object Object]`. Both are
   now their text.
+- A Fireworks text-completion stream chunk with no choices — the usage chunk an
+  OpenAI-compatible server sends last — was read through its first choice and
+  threw, cutting the stream short and losing the usage. It is now passed on with
+  `choices: []` and its usage.

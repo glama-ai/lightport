@@ -157,6 +157,10 @@ export const FireworksAICompleteStreamChunkTransform: (response: string) => stri
     return `data: ${chunk}\n\n`;
   }
   const parsedChunk: FireworksAICompleteStreamChunk = parseJson(chunk);
+  // A chunk may carry no choice at all — the usage chunk OpenAI-compatible
+  // servers send last, with `choices: []` — and reading through the first one
+  // threw, which cut the stream short and lost the usage it carried.
+  const choice = parsedChunk.choices?.[0];
   return (
     `data: ${JSON.stringify({
       id: parsedChunk.id,
@@ -164,14 +168,16 @@ export const FireworksAICompleteStreamChunkTransform: (response: string) => stri
       created: parsedChunk.created,
       model: parsedChunk.model,
       provider: FIREWORKS_AI,
-      choices: [
-        {
-          index: parsedChunk.choices[0].index ?? 0,
-          text: parsedChunk.choices[0].text,
-          logprobs: null,
-          finish_reason: parsedChunk.choices[0].finish_reason,
-        },
-      ],
+      choices: choice
+        ? [
+            {
+              index: choice.index ?? 0,
+              text: choice.text,
+              logprobs: null,
+              finish_reason: choice.finish_reason,
+            },
+          ]
+        : [],
       ...(parsedChunk.usage ? { usage: parsedChunk.usage } : {}),
     })}` + '\n\n'
   );
