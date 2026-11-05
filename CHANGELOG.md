@@ -494,3 +494,7 @@ that answered and said nothing:
 - A reasoning effort was sent to a Gemini 3 model as asked, and Google refuses
   the levels a model does not take: `minimal` to a Pro, `medium` to 3 Pro. It is
   now sent as the nearest level the model does take.
+- Cerebras chat completions held back six parameters its reference documents —
+  `frequency_penalty`, `presence_penalty`, `logit_bias`, `logprobs`,
+  `parallel_tool_calls` and `service_tier` — and sent `top_logprobs` without the
+  `logprobs` it needs, which Cerebras refuses. All are now sent.
