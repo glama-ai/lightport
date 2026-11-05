@@ -558,7 +558,16 @@ interface AnthropicToolContentItem {
   input: Record<string, any>;
 }
 
-type AnthropicContentItem = AnthropicTextContentItem | AnthropicToolContentItem;
+interface AnthropicThinkingContentItem {
+  type: 'thinking';
+  thinking: string;
+  signature?: string;
+}
+
+type AnthropicContentItem =
+  | AnthropicTextContentItem
+  | AnthropicToolContentItem
+  | AnthropicThinkingContentItem;
 
 export interface AnthropicChatCompleteResponse {
   id: string;
@@ -582,6 +591,7 @@ export interface AnthropicChatCompleteStreamResponse {
   delta: {
     type?: string;
     text?: string;
+    thinking?: string;
     partial_json?: string;
     stop_reason?: ANTHROPIC_STOP_REASON;
   };
@@ -656,6 +666,9 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
       const promptTokens =
         input_tokens + (cache_read_input_tokens ?? 0) + (cache_creation_input_tokens ?? 0);
       const totalTokens = promptTokens + output_tokens;
+      const reasoning = response.content
+        .map((item) => (item.type === 'thinking' ? item.thinking : ''))
+        .join('');
 
       return {
         id: response.id,
@@ -668,6 +681,11 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
             message: {
               role: 'assistant',
               content,
+              // The thinking was only ever in `content_blocks`, which a caller
+              // asking for strict compliance — the default — is not sent, so
+              // they got none of it. `reasoning_content` is where every other
+              // provider here reports it, under either setting.
+              ...(reasoning && { reasoning_content: reasoning }),
               ...(!strictOpenAiCompliance && {
                 content_blocks: response.content.filter((item) => item.type !== 'tool_use'),
               }),
@@ -902,6 +920,11 @@ export const getAnthropicStreamChunkTransform = (
             delta: {
               content,
               role: 'assistant',
+              // As in the whole response: thinking reaches a strict caller here
+              // or not at all.
+              ...(parsedChunk.delta?.thinking && {
+                reasoning_content: parsedChunk.delta.thinking,
+              }),
               tool_calls: toolCalls.length ? toolCalls : undefined,
               ...(!strictOpenAiCompliance &&
                 !toolCalls.length && {

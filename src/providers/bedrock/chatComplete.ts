@@ -517,6 +517,12 @@ export const BedrockChatCompleteResponseTransform: (
     const contentBlocks = !strictOpenAiCompliance
       ? transformContentBlocks(response.output.message.content)
       : undefined;
+    // Reported in `reasoning_content` as every other provider here reports it.
+    // It was only in `content_blocks`, which a strict caller — the default — is
+    // not sent, so the thinking of every reasoner on Converse was dropped.
+    const reasoning = response.output.message.content
+      .map((item) => item.reasoningContent?.reasoningText?.text ?? '')
+      .join('');
 
     const cacheReadInputTokens = response.usage?.cacheReadInputTokens || 0;
     const cacheWriteInputTokens = response.usage?.cacheWriteInputTokens || 0;
@@ -544,6 +550,7 @@ export const BedrockChatCompleteResponseTransform: (
           message: {
             role: 'assistant',
             content,
+            ...(reasoning && { reasoning_content: reasoning }),
             ...(!strictOpenAiCompliance && {
               content_blocks: contentBlocks,
             }),
@@ -706,6 +713,9 @@ export const BedrockChatCompleteStreamChunkTransform: (
         delta: {
           role: 'assistant',
           content,
+          ...(parsedChunk.delta?.reasoningContent?.text && {
+            reasoning_content: parsedChunk.delta.reasoningContent.text,
+          }),
           ...(!strictOpenAiCompliance &&
             !toolCalls.length &&
             Object.keys(contentBlockObject.delta).length > 0 && {

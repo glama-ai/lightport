@@ -474,3 +474,8 @@ that answered and said nothing:
   the caller as an error frame carrying Bedrock's message, with the exception's
   name, read from the event-stream headers it arrived with, as its `type` and
   `code`.
+- Claude's thinking — on Anthropic, Vertex, Azure and Bedrock, which reports
+  every Converse reasoner's the same way — was only in `content_blocks`, which a
+  caller asking for strict compliance, the default, is not sent. Such a caller
+  got none of it, streamed or not. It is now in `reasoning_content` as well,
+  where every other provider here reports thinking, under either setting.
