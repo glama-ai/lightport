@@ -417,3 +417,9 @@ that answered and said nothing:
   disagreeing whenever the cache was used. The total is now derived from the two
   counts beside it, in the streamed response as well as the whole one, which
   holds whichever of the two Bedrock meant.
+- Hugging Face failed every request that named no `huggingface_base_url`. The
+  default was `api-inference.huggingface.co`, which no longer resolves, with the
+  model in the path; it is now the router, `router.huggingface.co`, with the
+  model in the body where the router reads it. The router serves chat
+  completions alone, so a text completion without a base URL is refused with a
+  `400` naming the setting that would serve it.
