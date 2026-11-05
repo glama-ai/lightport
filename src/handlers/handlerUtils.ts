@@ -12,6 +12,7 @@ import type { GatewayContext } from '../types/GatewayContext';
 import { Options, Params } from '../types/requestBody';
 import { externalServiceFetch, isRedirect } from '../utils/fetch';
 import { applyAdapterRequestTransform, adaptResponse, AdapterContext } from './adapterUtils';
+import { ambientIdentityRefusal } from './ambientIdentity';
 import { responseHandler } from './responseHandlers';
 import { Readable } from 'stream';
 
@@ -233,6 +234,12 @@ async function postToProvider(
   });
 
   const url = `${baseUrl}${endpoint}`;
+
+  // Before the headers are built, since building them is what mints the token.
+  const identityRefusal = ambientIdentityRefusal(provider, providerOption, url);
+  if (identityRefusal) {
+    throw new GatewayError(identityRefusal, 400);
+  }
 
   // Check for custom request handler (e.g., bedrock AWS signing)
   const requestHandlers = providerConfig.requestHandlers;

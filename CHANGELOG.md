@@ -95,6 +95,17 @@ redirect from any provider is now a `502` saying so, with no `Location` passed
 on. A custom host written as `http://` for a server that upgrades to `https://`
 by redirecting needs writing as the address it redirects to.
 
+**The gateway's own identity is only sent to the provider it is for.**
+
+`azure_auth_mode` `managed` and `workload`, and `vertex_auth_type` `workload`,
+send a token minted for the machine the gateway runs on rather than one the
+caller holds. Every other setting can choose the host — `custom_host`, an Azure
+Foundry URL, or a resource name or region that ends the provider's hostname
+early — so any caller could have that token sent wherever they liked. With those
+modes a request now goes to Azure's or Vertex's own hosts or is refused with a
+`400`. A private endpoint or proxy in front of either is out of reach with them;
+credentials the caller supplies still go anywhere a custom host can.
+
 ### Added
 
 **Requesty is available as a provider.** It routes to models from several houses

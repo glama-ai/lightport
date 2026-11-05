@@ -321,6 +321,104 @@ describe('redirects', () => {
   });
 });
 
+/*
+  A managed or workload identity is the gateway's, minted on behalf of whoever
+  deployed it. Each case names a host that passes every other check, so what
+  refuses it is the pairing of that host with an identity that is not the
+  caller's to send there.
+*/
+describe("the gateway's own identity", () => {
+  const AZURE = {
+    'x-lightport-azure-api-version': '2024-10-21',
+    'x-lightport-azure-deployment-id': 'gpt-4o',
+    'x-lightport-provider': 'azure-openai',
+  };
+
+  it.each(['managed', 'workload'])(
+    'is not sent to a custom host with azure auth mode %s',
+    async (mode) => {
+      const provider = await startProvider();
+      const { body, status } = await call('/v1/chat/completions', {
+        ...AZURE,
+        'x-lightport-azure-auth-mode': mode,
+        'x-lightport-azure-resource-name': 'example',
+        'x-lightport-custom-host': `http://127.0.0.1:${provider.port}`,
+      });
+
+      expect(status).toBe(400);
+      expect(body?.error?.message).toContain("gateway's own credentials");
+      expect(provider.received).toEqual([]);
+    },
+  );
+
+  // Interpolated into `https://{name}.openai.azure.com`, the name ends the host
+  // early and the rest of the template becomes a query string.
+  it('is not sent where an azure resource name ends the host early', async () => {
+    const provider = await startProvider();
+    const { status } = await call('/v1/chat/completions', {
+      ...AZURE,
+      'x-lightport-azure-auth-mode': 'managed',
+      'x-lightport-azure-resource-name': `127.0.0.1:${provider.port}/?`,
+    });
+
+    expect(status).toBe(400);
+    expect(provider.received).toEqual([]);
+  });
+
+  it('is not sent to an azure foundry url outside azure', async () => {
+    const provider = await startProvider();
+    const { status } = await call('/v1/chat/completions', {
+      'x-lightport-azure-auth-mode': 'workload',
+      'x-lightport-azure-foundry-url': `http://127.0.0.1:${provider.port}/models`,
+      'x-lightport-provider': 'azure-ai',
+    });
+
+    expect(status).toBe(400);
+    expect(provider.received).toEqual([]);
+  });
+
+  it('is not sent to a custom host with vertex auth type workload', async () => {
+    const provider = await startProvider();
+    const { status } = await call('/v1/chat/completions', {
+      'x-lightport-custom-host': `http://127.0.0.1:${provider.port}`,
+      'x-lightport-provider': 'vertex-ai',
+      'x-lightport-vertex-auth-type': 'workload',
+      'x-lightport-vertex-project-id': 'example',
+      'x-lightport-vertex-region': 'us-central1',
+    });
+
+    expect(status).toBe(400);
+    expect(provider.received).toEqual([]);
+  });
+
+  it("still lets a caller's own azure credentials go to a custom host", async () => {
+    const provider = await startProvider();
+    const { status } = await call('/v1/chat/completions', {
+      ...AZURE,
+      'x-lightport-azure-resource-name': 'example',
+      'x-lightport-custom-host': `http://127.0.0.1:${provider.port}`,
+    });
+
+    expect(status).toBe(200);
+    expect(provider.received).toHaveLength(1);
+  });
+
+  // The token a caller supplies is sent ahead of any mode.
+  it('still lets a caller-supplied azure token go to a custom host beside a mode', async () => {
+    const provider = await startProvider();
+    const { status } = await call('/v1/chat/completions', {
+      ...AZURE,
+      'x-lightport-azure-ad-token': 'caller-token',
+      'x-lightport-azure-auth-mode': 'managed',
+      'x-lightport-azure-resource-name': 'example',
+      'x-lightport-custom-host': `http://127.0.0.1:${provider.port}`,
+    });
+
+    expect(status).toBe(200);
+    expect(provider.received).toHaveLength(1);
+  });
+});
+
 describe('forward_headers self-reference through the config', () => {
   // The same aliasing: the schema refuses `forward_headers` naming the header
   // that carries it, and `forwardHeaders` went around the refusal.
