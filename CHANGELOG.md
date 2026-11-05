@@ -534,3 +534,7 @@ that answered and said nothing:
   OpenAI-compatible server sends last — was read through its first choice and
   threw, cutting the stream short and losing the usage. It is now passed on with
   `choices: []` and its usage.
+- An Anthropic OAuth access token, `sk-ant-oat…`, matched the test for an API key
+  and was sent as `X-API-Key`, which Anthropic refuses, without the beta that has
+  Anthropic read it as a token. It is now sent as a bearer token with
+  `oauth-2025-04-20` added to the caller's betas.
