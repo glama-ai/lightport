@@ -252,9 +252,7 @@ async function postToProvider(
     // Fold the timeout into the same ambient signal, and tell a timeout apart
     // from a caller hangup the way the main path below does.
     const customRequestTimeout =
-      Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) ||
-      providerOption.requestTimeout ||
-      null;
+      Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) || providerOption.requestTimeout || null;
 
     const invokeRequestHandler = () =>
       requestHandlers[fn]!({
