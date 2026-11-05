@@ -96,6 +96,42 @@ interface AnthropicUrlImageContentItem {
   };
 }
 
+/*
+  OpenAI's service tiers, in the two Anthropic has. \`auto\` takes Priority Tier
+  capacity where the account has some and standard otherwise; \`standard_only\`
+  never does. OpenAI's \`default\` is the second and \`priority\` asks for the
+  first. \`flex\` and \`scale\` have no counterpart and are not sent, as the tier
+  was not sent at all before: passed through raw, Anthropic refuses every one of
+  OpenAI's names but \`auto\`.
+
+  Only Anthropic's own API takes this. Vertex and Azure build their Claude
+  configs on this one, so it is added where Anthropic's provider is assembled
+  rather than here, where it would reach them too.
+*/
+const ANTHROPIC_SERVICE_TIERS: Record<string, string> = {
+  auto: 'auto',
+  default: 'standard_only',
+  priority: 'auto',
+  standard_only: 'standard_only',
+};
+
+export const anthropicServiceTierParam = {
+  param: 'service_tier',
+  required: false,
+  transform: (params: Params) =>
+    typeof params.service_tier === 'string' &&
+    Object.hasOwn(ANTHROPIC_SERVICE_TIERS, params.service_tier)
+      ? ANTHROPIC_SERVICE_TIERS[params.service_tier]
+      : undefined,
+};
+
+/**
+ * The tier Anthropic says served a request, named as OpenAI names its own.
+ * Anthropic reports it inside \`usage\`; OpenAI's clients read it beside it.
+ */
+const openAiServiceTier = (tier: unknown) =>
+  typeof tier === 'string' ? (tier === 'standard' ? 'default' : tier) : undefined;
+
 interface AnthropicTextContentItem {
   type: 'text';
   text: string;
@@ -584,6 +620,7 @@ export interface AnthropicChatCompleteResponse {
     output_tokens: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    service_tier?: string;
   };
 }
 
@@ -617,6 +654,7 @@ export interface AnthropicChatCompleteStreamResponse {
       input_tokens?: number;
       cache_creation_input_tokens?: number;
       cache_read_input_tokens?: number;
+      service_tier?: string;
     };
   };
   error?: AnthropicErrorObject;
@@ -671,6 +709,7 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
       const reasoning = response.content
         .map((item) => (item.type === 'thinking' ? item.thinking : ''))
         .join('');
+      const serviceTier = openAiServiceTier(response.usage?.service_tier);
 
       return {
         id: response.id,
@@ -678,6 +717,7 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
         created: Math.floor(Date.now() / 1000),
         model: response.model,
         provider: provider,
+        ...(serviceTier && { service_tier: serviceTier }),
         choices: [
           {
             message: {
@@ -776,6 +816,7 @@ export const getAnthropicStreamChunkTransform = (
 
     if (parsedChunk.type === 'message_start' && parsedChunk.message?.usage) {
       streamState.model = parsedChunk?.message?.model ?? '';
+      streamState.serviceTier = openAiServiceTier(parsedChunk.message?.usage?.service_tier);
       streamState.usage = {
         input_tokens: parsedChunk.message?.usage?.input_tokens,
         cache_read_input_tokens: parsedChunk.message?.usage?.cache_read_input_tokens,
@@ -822,6 +863,9 @@ export const getAnthropicStreamChunkTransform = (
           created: Math.floor(Date.now() / 1000),
           model: streamState.model,
           provider: provider,
+          // Anthropic names the tier when the message starts; it is told with
+          // the usage, which is where a caller reading the bill looks.
+          ...(streamState.serviceTier && { service_tier: streamState.serviceTier }),
           choices: [
             {
               index: 0,

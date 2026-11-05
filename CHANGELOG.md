@@ -514,3 +514,10 @@ that answered and said nothing:
 - Gemini's URL context tool, named `url_context` or `urlContext`, was sent as a
   function of that name for the caller to run, rather than as the tool Gemini
   runs itself. It is now sent as `urlContext`, beside search and maps.
+- Anthropic was never sent a `service_tier`, so asking for standard capacity
+  alone had no effect, and the tier that served a request was never reported.
+  OpenAI's names are now sent as Anthropic's — `auto` and `priority` as `auto`,
+  `default` as `standard_only` — and the rest, which Anthropic has no tier for,
+  are not sent. The tier is reported beside the usage, as `service_tier`, where
+  OpenAI's clients read it. Claude on Vertex and Azure, which take no such field,
+  is not sent it.

@@ -12,6 +12,8 @@ export type AnthropicStreamState = {
     cache_creation_input_tokens?: number;
   };
   model?: string;
+  /** The tier Anthropic said served the request, in OpenAI's name for it. */
+  serviceTier?: string;
 };
 
 // https://docs.anthropic.com/en/api/messages#response-stop-reason
