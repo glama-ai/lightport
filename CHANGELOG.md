@@ -549,3 +549,6 @@ that answered and said nothing:
   unstreamed reported both. Both are now read from the usage the provider sent.
 - Groq was sent `logit_bias`, which it says none of its models take. The
   exclusion meant to hold it back was spelled `logits_bias` and excluded nothing.
+- SambaNova chat completions defaulted to `Meta-Llama-3.1-8B-Instruct`, which
+  SambaNova has withdrawn, so a request naming no model was sent to one that is
+  gone. No model is defaulted now, as for its text completions.

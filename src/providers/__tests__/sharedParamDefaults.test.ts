@@ -55,3 +55,10 @@ describe('a default one provider names', () => {
     expect(request.model).toBe('glm-4.5-air');
   });
 });
+
+describe('a default model a provider withdrew', () => {
+  // SambaNova no longer serves the model its chat endpoint defaulted to.
+  it('is not sent to sambanova', () => {
+    expect(modelSentBy('sambanova')).toBeUndefined();
+  });
+});
