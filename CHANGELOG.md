@@ -511,3 +511,6 @@ that answered and said nothing:
   Token Factory replaced, and defaulted to models absent from Token Factory's
   catalog. It is now addressed at `api.tokenfactory.nebius.com`, and a request
   naming no model is sent none rather than one that is gone.
+- Gemini's URL context tool, named `url_context` or `urlContext`, was sent as a
+  function of that name for the caller to run, rather than as the tool Gemini
+  runs itself. It is now sent as `urlContext`, beside search and maps.

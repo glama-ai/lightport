@@ -982,6 +982,10 @@ export const googleTools = [
   'computer_use',
   'googleMaps',
   'google_maps',
+  // URL context, which has Gemini read the pages a prompt links to. Unnamed
+  // here it went out as a function of that name, for the caller to run.
+  'urlContext',
+  'url_context',
 ];
 
 export const transformGoogleTools = (tool: Tool) => {
@@ -1009,6 +1013,8 @@ export const transformGoogleTools = (tool: Tool) => {
         enableWidget: tool.function.parameters?.enableWidget,
       },
     });
+  } else if (['urlContext', 'url_context'].includes(tool.function.name)) {
+    tools.push({ urlContext: {} });
   }
   return tools;
 };
