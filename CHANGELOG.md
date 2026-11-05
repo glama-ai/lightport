@@ -457,3 +457,8 @@ that answered and said nothing:
   Bedrock was a `500` and is a `400` saying why. Through the Responses API, a
   file given by `file_url` now reaches the provider, and an image given by
   `file_id`, which no chat completion can name, is refused.
+- An Azure OpenAI Responses request on a dated `api-version` was sent the
+  model's name as `model`, where Azure reads the deployment's — the address names
+  no deployment there — so any deployment not named after its model answered
+  `DeploymentNotFound`. The `v1` API without a deployment id was sent no model at
+  all. The deployment is now sent wherever one is named, and the model otherwise.
