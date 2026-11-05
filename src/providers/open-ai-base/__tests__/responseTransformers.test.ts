@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import ProviderConfigs from '../../index';
 import { responseTransformers } from '..';
 
 const chatComplete = (provider = 'testprovider') =>
@@ -167,6 +168,43 @@ describe('a provider that brought its own transformer', () => {
     (transforms.embed as any)({ error: { message: 'nope' } }, 400);
 
     expect(seen).toEqual([true]);
+  });
+});
+
+describe('a provider whose transformer reads only its answers', () => {
+  // SambaNova and Lemonfox reshape a successful reply and have nothing to say
+  // about a failure, which reached the caller as the provider wrote it.
+  it.each(['sambanova', 'lemonfox-ai'])(
+    '%s sends a failure in the envelope every other failure arrives in',
+    (provider) => {
+      const transform = (ProviderConfigs as any)[provider].responseTransforms.chatComplete;
+
+      expect(transform({ 'html-message': '<html>502 Bad Gateway</html>' }, 502)).toEqual({
+        error: {
+          code: null,
+          message: `${provider} error: <html>502 Bad Gateway</html>`,
+          param: null,
+          type: null,
+        },
+        provider,
+      });
+      expect(
+        transform({ error: { message: 'Rate limited', type: 'rate_limit' } }, 429),
+      ).toMatchObject({
+        error: { message: `${provider} error: Rate limited`, type: 'rate_limit' },
+        provider,
+      });
+    },
+  );
+
+  it('still reshapes their answers', () => {
+    const transform = (ProviderConfigs as any).sambanova.responseTransforms.chatComplete;
+    const result = transform(
+      { choices: [{ finish_reason: 'stop', index: 0, message: { content: 'hi' } }], id: 'x' },
+      200,
+    );
+
+    expect(result.choices[0].message).toEqual({ content: 'hi', role: 'assistant' });
   });
 });
 

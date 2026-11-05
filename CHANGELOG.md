@@ -521,3 +521,8 @@ that answered and said nothing:
   are not sent. The tier is reported beside the usage, as `service_tier`, where
   OpenAI's clients read it. Claude on Vertex and Azure, which take no such field,
   is not sent it.
+- A failed chat completion from SambaNova or Lemonfox reached the caller as the
+  provider wrote it — an HTML error page from something in front of the API,
+  among others — rather than in the error envelope every other failure arrives
+  in. Both bring a transformer for their answers, which handed failures back
+  untouched; a failure is now left to the shared reader.

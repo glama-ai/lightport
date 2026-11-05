@@ -46,7 +46,10 @@ export default {
     ...responseTransformers(SAMBANOVA, {
       complete: true,
       chatComplete: (response, isError) => {
-        if (isError || !('choices' in response)) return response;
+        // A failure is read by the shared reader, into the envelope a caller
+        // expects; see `CustomTransformer`.
+        if (isError) return undefined;
+        if (!('choices' in response)) return response;
 
         return {
           ...response,

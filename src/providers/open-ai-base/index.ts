@@ -14,7 +14,11 @@ import {
 } from '../utils';
 import { OpenAICreateModelResponseConfig } from './createModelResponse';
 
-type CustomTransformer<T, U> = (response: T | ErrorResponse, isError?: boolean) => U;
+/**
+ * Reads a provider's answer in the provider's own shape. On a failure it may
+ * return nothing, which leaves the failure to the shared reader.
+ */
+type CustomTransformer<T, U> = (response: T | ErrorResponse, isError?: boolean) => U | undefined;
 
 type DefaultValues = {
   model?: string;
@@ -310,7 +314,12 @@ const upstreamTransformer = <T>(
       result && typeof result === 'object' ? nameProvider(result, provider) : result;
 
     if (read.kind === 'failure') {
-      return customTransformer ? named(customTransformer(response, true)) : read.error;
+      // A transformer written for a provider's answers, with nothing of its own
+      // to say about a failure, returns nothing and the failure is read here.
+      // Returning the body as it came, as two did, sent the caller whatever the
+      // provider wrote — an HTML error page wrapped as `html-message` among
+      // it — in place of the error envelope every other failure arrives in.
+      return (customTransformer && named(customTransformer(response, true))) ?? read.error;
     }
 
     if (customTransformer) return named(customTransformer(read.body));
