@@ -552,3 +552,7 @@ that answered and said nothing:
 - SambaNova chat completions defaulted to `Meta-Llama-3.1-8B-Instruct`, which
   SambaNova has withdrawn, so a request naming no model was sent to one that is
   gone. No model is defaulted now, as for its text completions.
+- Workers AI tool calls read from the shape of the route it left, kept for a
+  custom host mapped onto that route, were numbered `"0"`, `"1"`… in every reply,
+  so a later turn's calls shared the ids of an earlier one's. Each now has an id
+  of its own.

@@ -1,5 +1,6 @@
 import { WORKERS_AI } from '../../globals';
 import { Params } from '../../types/requestBody';
+import { getOrGenerateId } from '../../utils/idGenerator';
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
 import { OpenAIErrorResponseTransform } from '../openai/utils';
@@ -186,8 +187,12 @@ export const WorkersAiChatCompleteResponseTransform: (
             // parsed arguments — rather than as the OpenAI shape the gateway
             // hands on, so they are given both.
             ...(toolCalls?.length && {
-              tool_calls: toolCalls.map((toolCall, index) => ({
-                id: `${index}`,
+              // An id of the gateway's making, as this route gives none. They
+              // were numbered from 0 in every reply, so a later turn's calls
+              // shared the ids of an earlier one's, and a client pairing
+              // results to calls by id could pair them with the wrong one.
+              tool_calls: toolCalls.map((toolCall) => ({
+                id: getOrGenerateId(undefined, 'toolCall'),
                 type: 'function' as const,
                 function: {
                   name: toolCall.name,
