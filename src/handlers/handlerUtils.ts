@@ -10,7 +10,7 @@ import { setRequestTags } from '../sentry/setRequestTags';
 import transformToProviderRequest from '../services/transformToProviderRequest';
 import type { GatewayContext } from '../types/GatewayContext';
 import { Options, Params } from '../types/requestBody';
-import { externalServiceFetch } from '../utils/fetch';
+import { externalServiceFetch, isRedirect } from '../utils/fetch';
 import { applyAdapterRequestTransform, adaptResponse, AdapterContext } from './adapterUtils';
 import { responseHandler } from './responseHandlers';
 import { Readable } from 'stream';
@@ -427,6 +427,20 @@ async function postToProvider(
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
+  }
+
+  // A redirect is answered rather than followed — see `externalServiceFetch`.
+  // Passed on as it came, it would hand the caller the address the gateway
+  // refused to fetch, for the caller's client to follow instead.
+  if (isRedirect(response)) {
+    await response.body?.cancel().catch(() => {});
+    response = openAiErrorResponse(
+      {
+        message: 'The provider answered with a redirect, which the gateway does not follow',
+        type: 'api_error',
+      },
+      502,
+    );
   }
 
   // Transform the response

@@ -1,6 +1,7 @@
 import createApp from '../index';
 import getPort from 'get-port';
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 // One gateway for the file. Every case here is refused or served before the
@@ -28,6 +29,17 @@ afterEach(async () => {
 });
 
 /**
+ * Listens on a port the OS picks rather than one chosen beforehand. A port found
+ * free and then listened on can be taken in between — by the gateway's own
+ * outbound sockets, among others — which failed the file with EADDRINUSE.
+ */
+const listen = async (server: http.Server): Promise<number> => {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+  return (server.address() as AddressInfo).port;
+};
+
+/**
  * A stand-in provider that records whether the gateway ever reached it.
  *
  * Whether a request was made is the only thing worth asserting about a host the
@@ -35,7 +47,6 @@ afterEach(async () => {
  * it does not say the connection behind it was never opened.
  */
 const startProvider = async () => {
-  const port = await getPort();
   const received: string[] = [];
   const server = http.createServer((req, res) => {
     received.push(`${req.method} ${req.url}`);
@@ -53,9 +64,8 @@ const startProvider = async () => {
   });
 
   servers.push(server);
-  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
 
-  return { port, received };
+  return { port: await listen(server), received };
 };
 
 const BODY_FOR_PATH: Record<string, Record<string, unknown>> = {
@@ -230,6 +240,84 @@ describe('provider-supplied base URLs', () => {
     });
 
     expect(status).not.toBe(400);
+  });
+});
+
+/**
+ * A host that passes the check and answers every request with a redirect to
+ * `location`. The check is made on the address a request starts at, which is
+ * the only one this server needs to be for the redirect to be worth anything.
+ */
+const startRedirectingProvider = async (status: number, location: string) => {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(status, { location });
+    res.end();
+  });
+
+  servers.push(server);
+
+  return { port: await listen(server) };
+};
+
+describe('redirects', () => {
+  /*
+    Stood in for by a second local server rather than by the metadata address
+    itself, so that the assertion is about the gateway not going there rather
+    than about the address being unreachable from wherever the suite runs.
+  */
+  it.each([301, 302, 303, 307, 308])('does not follow a %i', async (status) => {
+    const target = await startProvider();
+    const redirecting = await startRedirectingProvider(
+      status,
+      `http://127.0.0.1:${target.port}/latest/meta-data/`,
+    );
+
+    const { body, status: responseStatus } = await call('/v1/chat/completions', {
+      'x-lightport-config': config({ customHost: `http://127.0.0.1:${redirecting.port}` }),
+    });
+
+    expect(target.received).toEqual([]);
+    expect(responseStatus).toBe(502);
+    expect(body?.error?.message).toContain('redirect');
+  });
+
+  it('does not hand the caller the address it was redirected to', async () => {
+    const redirecting = await startRedirectingProvider(307, 'http://169.254.169.254/latest/');
+
+    const response = await fetch(`http://127.0.0.1:${gatewayPort}/v1/chat/completions`, {
+      body: JSON.stringify(BODY_FOR_PATH['/v1/chat/completions']),
+      headers: {
+        authorization: 'Bearer sk-not-a-real-key',
+        'content-type': 'application/json',
+        'x-lightport-config': config({ customHost: `http://127.0.0.1:${redirecting.port}` }),
+      },
+      method: 'POST',
+      redirect: 'manual',
+    });
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('does not follow a redirect on a streamed request', async () => {
+    const target = await startProvider();
+    const redirecting = await startRedirectingProvider(
+      307,
+      `http://127.0.0.1:${target.port}/latest/meta-data/`,
+    );
+
+    const response = await fetch(`http://127.0.0.1:${gatewayPort}/v1/chat/completions`, {
+      body: JSON.stringify({ ...BODY_FOR_PATH['/v1/chat/completions'], stream: true }),
+      headers: {
+        authorization: 'Bearer sk-not-a-real-key',
+        'content-type': 'application/json',
+        'x-lightport-config': config({ customHost: `http://127.0.0.1:${redirecting.port}` }),
+      },
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(502);
+    expect(target.received).toEqual([]);
   });
 });
 

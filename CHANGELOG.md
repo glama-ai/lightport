@@ -86,6 +86,15 @@ answer to be arrived at differently rather than for a different answer, so the
 request still means what it said and is served — with a warning in the log naming
 what nothing acted on.
 
+**A provider's redirect is no longer followed.**
+
+The address a request is checked against is the one it starts at, and a
+redirect names another that nothing checked: a custom host answering `307` with
+the cloud metadata address had the gateway fetch it and return what it found. A
+redirect from any provider is now a `502` saying so, with no `Location` passed
+on. A custom host written as `http://` for a server that upgrades to `https://`
+by redirecting needs writing as the address it redirects to.
+
 ### Added
 
 **Requesty is available as a provider.** It routes to models from several houses
