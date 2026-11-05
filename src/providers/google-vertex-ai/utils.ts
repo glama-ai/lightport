@@ -1054,6 +1054,38 @@ const canStopThinking = (model?: string) => /gemini-2\.5-flash/.test(model?.toLo
 
 const THINKING_LEVELS = new Set(['minimal', 'low', 'medium', 'high']);
 
+const LEVEL_ORDER = ['minimal', 'low', 'medium', 'high'];
+
+/*
+  The levels a Gemini 3 model takes, where it is not all four. Google lists them
+  model by model and refuses the rest, so passing a level through as asked was a
+  400 for \`minimal\` to a Pro and \`medium\` to 3 Pro. Read in order, the most
+  particular first; a model none of them names takes all four.
+*/
+const LEVELS_BY_MODEL: [RegExp, string[]][] = [
+  [/gemini-3-pro/, ['low', 'high']],
+  [/flash-lite-image/, ['minimal', 'high']],
+  [/gemini-3\.8-flash/, ['low', 'medium', 'high']],
+  [/-pro/, ['low', 'medium', 'high']],
+];
+
+/**
+ * The level nearest the one asked for that the model takes. A tie goes to the
+ * deeper one, as the Pro models think at \`high\` unless told otherwise.
+ */
+const levelFor = (model: string | undefined, level: string): string => {
+  const name = model?.toLowerCase() ?? '';
+  const supported = LEVELS_BY_MODEL.find(([pattern]) => pattern.test(name))?.[1];
+  if (!supported || supported.includes(level)) return level;
+
+  const asked = LEVEL_ORDER.indexOf(level);
+  const distance = (candidate: string) => Math.abs(LEVEL_ORDER.indexOf(candidate) - asked);
+
+  return supported.reduce((nearest, candidate) =>
+    distance(candidate) <= distance(nearest) ? candidate : nearest,
+  );
+};
+
 const THINKING_BUDGETS: Record<string, number> = {
   minimal: 1024,
   low: 1024,
@@ -1103,8 +1135,9 @@ export const transformGeminiThinkingConfig = (
   }
 
   if (usesThinkingLevel(model)) {
-    if (THINKING_LEVELS.has(reasoningEffort.toLowerCase())) {
-      return { thinkingConfig: { includeThoughts: true, thinkingLevel: reasoningEffort } };
+    const level = reasoningEffort.toLowerCase();
+    if (THINKING_LEVELS.has(level)) {
+      return { thinkingConfig: { includeThoughts: true, thinkingLevel: levelFor(model, level) } };
     }
 
     // Gemini 3 has no level for a number of tokens, but does still take a

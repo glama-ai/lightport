@@ -647,7 +647,9 @@ export const GoogleChatCompleteResponseTransform: (
     const {
       promptTokenCount,
       cachedContentTokenCount = 0,
-      candidatesTokenCount,
+      // Left out by Gemini when it is zero — a reply spent wholly on thinking —
+      // and a missing count summed to NaN, reported as null.
+      candidatesTokenCount = 0,
       totalTokenCount,
       thoughtsTokenCount = 0,
     } = response.usageMetadata;
@@ -777,7 +779,9 @@ export const GoogleChatCompleteStreamChunkTransform: (
     const {
       promptTokenCount,
       cachedContentTokenCount = 0,
-      candidatesTokenCount,
+      // Left out by Gemini when it is zero — a reply spent wholly on thinking —
+      // and a missing count summed to NaN, reported as null.
+      candidatesTokenCount = 0,
       totalTokenCount,
       thoughtsTokenCount = 0,
     } = parsedChunk.usageMetadata;
@@ -824,7 +828,12 @@ export const GoogleChatCompleteStreamChunkTransform: (
               : {}),
           };
         }) ?? [],
-      ...(parsedChunk.usageMetadata?.candidatesTokenCount && {
+      // Sent once the model has said something, as before, and on the chunk that
+      // ends the reply whatever it said: a reply spent wholly on thinking has no
+      // count of its own, and finished without reporting what it used.
+      ...((parsedChunk.usageMetadata?.candidatesTokenCount ||
+        (parsedChunk.usageMetadata &&
+          parsedChunk.candidates?.some((candidate) => candidate.finishReason))) && {
         usage: usageMetadata,
       }),
     })}` + '\n\n'

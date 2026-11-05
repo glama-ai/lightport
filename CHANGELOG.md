@@ -486,3 +486,11 @@ that answered and said nothing:
   and a developer item, as Codex sends. Every system and developer message is now
   gathered into the instruction, in order. An assistant turn's text, sent beside
   its `tool_calls`, was dropped too, and now goes ahead of the calls.
+- A Gemini reply spent wholly on thinking reported `completion_tokens: null`,
+  and streamed, no usage at all. Gemini leaves its candidate count out when it is
+  zero, and the missing count was summed as though present. It now counts as
+  zero, and the chunk that ends a reply carries its usage whatever it said.
+  Vertex likewise reports `cached_tokens: 0` rather than leaving it out.
+- A reasoning effort was sent to a Gemini 3 model as asked, and Google refuses
+  the levels a model does not take: `minimal` to a Pro, `medium` to 3 Pro. It is
+  now sent as the nearest level the model does take.
