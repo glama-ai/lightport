@@ -430,3 +430,10 @@ that answered and said nothing:
   on the shared base against it, sending the parameters AI21 documents and its
   own `documents`. Text completions are refused with a `400` rather than sent
   where they 404.
+- Gemini, on Google and Vertex, streamed tool calls wrong three ways. A chunk was
+  read as whichever kind its first part was, so a call that followed text or a
+  thought in the same chunk was dropped and the response finished as `stop`; a
+  call followed by text sent `tool_calls: [{…}, null]`, which the Responses
+  adapter could not read past; and a call was numbered by its place in its chunk,
+  so two calls in different chunks were both index 0 and a client assembled them
+  into one. Every part is now read, and calls are numbered across the response.

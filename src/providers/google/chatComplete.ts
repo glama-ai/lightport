@@ -34,6 +34,7 @@ import {
   generateInvalidProviderResponseError,
   transformFinishReason,
 } from '../utils';
+import { geminiStreamDelta } from '../google-vertex-ai/streamDelta';
 import { GOOGLE_GENERATE_CONTENT_FINISH_REASON, LightportGeminiParams } from './types';
 
 const transformGenerationConfig = (params: LightportGeminiParams) => {
@@ -803,83 +804,19 @@ export const GoogleChatCompleteStreamChunkTransform: (
       provider: 'google',
       choices:
         parsedChunk.candidates?.map((generation, index) => {
-          let message: any = { role: 'assistant', content: '' };
+          const candidateIndex = generation.index ?? index;
           const finishReason = generation.finishReason
             ? transformFinishReason(generation.finishReason, strictOpenAiCompliance)
             : null;
-          if (generation.content?.parts?.[0]?.text) {
-            const contentBlocks = [];
-            let content = '';
-            for (const part of generation.content.parts) {
-              if (part.thought) {
-                contentBlocks.push({
-                  index: 0,
-                  delta: { thinking: part.text },
-                });
-                streamState.containsChainOfThoughtMessage = true;
-              } else {
-                content += part.text ?? '';
-                contentBlocks.push({
-                  index: streamState.containsChainOfThoughtMessage ? 1 : 0,
-                  delta: { text: part.text },
-                });
-              }
-            }
-            message = {
-              role: 'assistant',
-              content,
-              ...(!strictOpenAiCompliance &&
-                contentBlocks.length && { content_blocks: contentBlocks }),
-            };
-          } else if (generation.content?.parts?.[0]?.functionCall) {
-            streamState.hasToolCalls = true;
-            message = {
-              role: 'assistant',
-              tool_calls: generation.content.parts.map((part, idx) => {
-                if (part.functionCall) {
-                  return {
-                    index: idx,
-                    id: getOrGenerateId(undefined, 'toolCall'),
-                    type: 'function',
-                    function: {
-                      name: part.functionCall.name,
-                      arguments: JSON.stringify(part.functionCall.args),
-                      ...(!strictOpenAiCompliance &&
-                        part.thoughtSignature && {
-                          thought_signature: part.thoughtSignature,
-                        }),
-                    },
-                  };
-                }
-              }),
-            };
-          } else if (generation.content?.parts?.[0]?.inlineData) {
-            const part = generation.content.parts[0];
-            const contentBlocks = [
-              {
-                index: streamState.containsChainOfThoughtMessage ? 1 : 0,
-                delta: {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${part.inlineData?.mimeType};base64,${part.inlineData?.data}`,
-                  },
-                },
-              },
-            ];
-            message = {
-              role: 'assistant',
-              content_blocks: contentBlocks,
-            };
-          } else if (generation.finishMessage) {
-            // Handle cases where content is empty (e.g., MALFORMED_FUNCTION_CALL)
-            message = {
-              role: 'assistant',
-              content: generation.finishMessage,
-            };
-          }
+          const message = geminiStreamDelta(
+            generation,
+            candidateIndex,
+            streamState,
+            strictOpenAiCompliance,
+          );
           return {
             delta: message,
-            index: generation.index ?? index,
+            index: candidateIndex,
             finish_reason: finishReason && streamState.hasToolCalls ? 'tool_calls' : finishReason,
             ...(!strictOpenAiCompliance && generation.groundingMetadata
               ? { groundingMetadata: generation.groundingMetadata }
