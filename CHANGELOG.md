@@ -498,3 +498,7 @@ that answered and said nothing:
   `frequency_penalty`, `presence_penalty`, `logit_bias`, `logprobs`,
   `parallel_tool_calls` and `service_tier` — and sent `top_logprobs` without the
   `logprobs` it needs, which Cerebras refuses. All are now sent.
+- Oracle sent a token limit for OpenAI's reasoning models — GPT-5 and the
+  o-series — as `maxTokens`, which OCI refuses for them in favour of
+  `maxCompletionTokens`, so any such request with a limit failed. Their limit is
+  now sent under the name OCI reads.
