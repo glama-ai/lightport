@@ -544,3 +544,6 @@ that answered and said nothing:
   provider options, and Azure AI chooses them by whether its Foundry URL names an
   Anthropic deployment. They are now chosen with the options the request was
   sent with.
+- A streamed Responses request reported `cached_tokens: 0` and
+  `reasoning_tokens: 0` whatever the provider counted, where the same request
+  unstreamed reported both. Both are now read from the usage the provider sent.
