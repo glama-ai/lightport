@@ -18,6 +18,7 @@ const providers = [
   ['hyperbolic', 'https://api.hyperbolic.xyz/v1/completions'],
   ['sambanova', 'https://api.sambanova.ai/v1/completions'],
   ['nscale', 'https://inference.api.nscale.com/v1/completions'],
+  ['empiriolabs', 'https://api.empiriolabs.ai/v1/completions'],
 ] as const;
 
 // What each provider does not take on `/completions`, and so must not be sent.
@@ -26,6 +27,19 @@ const excluded: Record<string, string[]> = {
   hyperbolic: [],
   sambanova: ['presence_penalty', 'frequency_penalty', 'user', 'logprobs'],
   nscale: ['user'],
+  // Published: model, prompt, stream, temperature, max_tokens, top_p, stop and
+  // logit_bias. The rest are held back rather than assumed.
+  empiriolabs: [
+    'n',
+    'logprobs',
+    'echo',
+    'presence_penalty',
+    'frequency_penalty',
+    'best_of',
+    'user',
+    'seed',
+    'suffix',
+  ],
 };
 
 // Every parameter a caller might send, so that anything not excluded is proven
@@ -104,8 +118,6 @@ describe('providers left out of the sweep', () => {
   it.each([
     // Documented as chat-only.
     'groq',
-    // The route answers, but the parameters it takes are not published.
-    'empiriolabs',
     // Served, but aliased to chat: the body comes back as a `chat.completion`
     // carrying `message`, which the text-completion transformer cannot read.
     'scx-ai',
