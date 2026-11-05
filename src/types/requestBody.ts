@@ -259,6 +259,8 @@ export interface ContentType extends PromptCache {
     file_id?: string;
     file_name?: string;
     file_url?: string;
+    /** OpenAI's name for `file_name`. */
+    filename?: string;
     mime_type?: string;
   };
   input_audio?: {

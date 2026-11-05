@@ -1,3 +1,4 @@
+import { GatewayError } from '../../errors/GatewayError';
 import { BatchEndpoints, GOOGLE_VERTEX_AI, fileExtensionMimeTypeMap } from '../../globals';
 import { logger } from '../../logger';
 import { captureException } from '../../sentry/captureException';
@@ -8,6 +9,7 @@ import { externalServiceFetch } from '../../utils/fetch';
 import { fetchWorkloadIdentityToken } from '../../utils/gcpAuth';
 import { ErrorResponse, FinetuneRequest, Logprobs } from '../types';
 import { generateErrorResponse } from '../utils';
+import { readFilePart, unreadableFileMessage } from '../utils/filePart';
 import {
   GoogleErrorResponse,
   GoogleResponseCandidate,
@@ -953,6 +955,22 @@ export const transformInputAudioPart = (c: ContentType) => {
       mimeType,
     },
   };
+};
+
+/**
+ * A \`file\` part as Gemini takes one: its content inline, or its address for
+ * Gemini to fetch. Gemini read neither — a file sent this way never reached the
+ * model, and the answer came back as though it had.
+ */
+export const transformGeminiFilePart = (item: ContentType, provider: string) => {
+  const file = readFilePart(item.file);
+  if (!file) {
+    throw new GatewayError(unreadableFileMessage(provider, item.file), 400);
+  }
+
+  return file.url === undefined
+    ? { inlineData: { mimeType: file.mimeType, data: file.data } }
+    : { fileData: { mimeType: file.mimeType, fileUri: file.url } };
 };
 
 export const googleTools = [

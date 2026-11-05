@@ -45,6 +45,7 @@ import {
   recursivelyDeleteUnsupportedParameters,
   transformGeminiToolParameters,
   transformGoogleTools,
+  transformGeminiFilePart,
   transformInputAudioPart,
   transformVertexLogprobs,
 } from './utils';
@@ -126,6 +127,8 @@ export const VertexGoogleChatCompleteConfig: ProviderConfig = {
                 });
               } else if (c.type === 'input_audio') {
                 parts.push(transformInputAudioPart(c));
+              } else if (c.type === 'file') {
+                parts.push(transformGeminiFilePart(c, GOOGLE_VERTEX_AI));
               } else if (c.type === 'image_url') {
                 const { url, mime_type: passedMimeType, media_resolution } = c.image_url || {};
 

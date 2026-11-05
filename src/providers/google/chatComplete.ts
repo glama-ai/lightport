@@ -14,6 +14,7 @@ import { parseJson } from '../../utils/parseJson';
 import {
   getMimeType,
   recursivelyDeleteUnsupportedParameters,
+  transformGeminiFilePart,
   transformInputAudioPart,
   transformGeminiToolParameters,
   transformVertexLogprobs,
@@ -283,6 +284,8 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
                 });
               } else if (c.type === 'input_audio') {
                 parts.push(transformInputAudioPart(c));
+              } else if (c.type === 'file') {
+                parts.push(transformGeminiFilePart(c, GOOGLE));
               } else if (c.type === 'image_url') {
                 const { url, mime_type: passedMimeType, media_resolution } = c.image_url || {};
                 if (!url) return;

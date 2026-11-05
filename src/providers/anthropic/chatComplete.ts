@@ -1,3 +1,4 @@
+import { GatewayError } from '../../errors/GatewayError';
 import { openAiErrorEvent } from '../../errors/openAiError';
 import { fileExtensionMimeTypeMap } from '../../globals';
 import {
@@ -11,6 +12,7 @@ import {
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
 import { generateInvalidProviderResponseError, transformFinishReason } from '../utils';
+import { readFilePart, unreadableFileMessage } from '../utils/filePart';
 import {
   AnthropicErrorObject,
   AnthropicErrorResponse,
@@ -233,27 +235,47 @@ const transformAndAppendFileContentItem = (
   item: ContentType,
   transformedMessage: AnthropicMessage,
 ) => {
-  const mimeType =
-    (item.file?.mime_type as keyof typeof fileExtensionMimeTypeMap) || fileExtensionMimeTypeMap.pdf;
-  if (item.file?.file_url) {
-    transformedMessage.content.push({
-      type: 'document',
-      source: {
-        type: 'url',
-        url: item.file.file_url,
-      },
-    });
-  } else if (item.file?.file_data) {
-    const contentType = mimeType === fileExtensionMimeTypeMap.txt ? 'text' : 'base64';
-    transformedMessage.content.push({
-      type: 'document',
-      source: {
-        type: contentType,
-        data: item.file.file_data,
-        media_type: mimeType,
-      },
-    });
+  const file = readFilePart(item.file);
+  // Refused rather than skipped: the model was otherwise asked about a file it
+  // was never shown, and answered as though it had read it.
+  if (!file) {
+    throw new GatewayError(unreadableFileMessage('anthropic', item.file), 400);
   }
+
+  const cacheControl = (item as any).cache_control && {
+    cache_control: (item as any).cache_control,
+  };
+
+  if (file.url !== undefined) {
+    transformedMessage.content.push({
+      type: 'document',
+      source: { type: 'url', url: file.url },
+      ...cacheControl,
+    });
+    return;
+  }
+
+  // Plain text is sent as text, which is what Anthropic reads it as. Written as
+  // a data URL it is base64 like any other, and decoded here; written raw it was
+  // always the text itself.
+  if (file.mimeType === fileExtensionMimeTypeMap.txt) {
+    transformedMessage.content.push({
+      type: 'document',
+      source: {
+        type: 'text',
+        data: file.fromDataUrl ? Buffer.from(file.data, 'base64').toString('utf8') : file.data,
+        media_type: file.mimeType,
+      },
+      ...cacheControl,
+    });
+    return;
+  }
+
+  transformedMessage.content.push({
+    type: 'document',
+    source: { type: 'base64', data: file.data, media_type: file.mimeType },
+    ...cacheControl,
+  });
 };
 
 /**

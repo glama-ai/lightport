@@ -245,6 +245,9 @@ function transformContent(content: any): string | ContentType[] {
           filename: p.filename,
           file_data: p.file_data,
           file_id: p.file_id,
+          // A file named by its address, which the providers that can fetch one
+          // read from here. It was dropped, and the file with it.
+          ...(p.file_url && { file_url: p.file_url }),
         },
       };
       if (p.cache_control) part.cache_control = p.cache_control;
@@ -306,6 +309,20 @@ export const findUnsupportedResponsesFields = (
   // asked for is dropped, and the answer comes back as though it had run.
   if (Array.isArray(req?.tools) && req.tools.some((tool: any) => tool?.type !== 'function')) {
     refused.push('tools');
+  }
+
+  // An image named by the id of a file uploaded to OpenAI. A chat completion
+  // can name an image only by its address or its data, so it was dropped and the
+  // model answered about a picture it was never shown.
+  const partsOf = (item: any): any[] =>
+    [item?.content, item?.output].flatMap((parts) => (Array.isArray(parts) ? parts : []));
+  if (
+    Array.isArray(req?.input) &&
+    req.input.some((item: any) =>
+      partsOf(item).some((part) => part?.type === 'input_image' && part.file_id && !part.image_url),
+    )
+  ) {
+    refused.push('input_image.file_id');
   }
 
   if (req?.truncation === 'auto') ignored.push('truncation');

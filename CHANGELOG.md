@@ -444,3 +444,16 @@ that answered and said nothing:
   message. A tool output given as parts, rather than a string, reached the
   provider as `input_text` parts no chat completion reads, and a function tool's
   `strict` was dropped; both now arrive as the chat completion names them.
+- A file sent the way OpenAI sends one — `file_data` a data URL, the name as
+  `filename` — was refused by Anthropic and Bedrock, which were handed the data
+  URL where raw base64 belonged, and never reached Gemini, which read no `file`
+  parts at all. All three now read it, and the shape first taken, raw content
+  beside a `mime_type`, still works. On Bedrock a document is now named as
+  Converse allows, without the extension whose dot alone was refused, and with
+  the format Converse calls it — `txt`, `docx` — rather than the MIME subtype.
+  A file a provider cannot read, named by id alone or at a web address Bedrock
+  cannot fetch, is refused with a `400` rather than left out of a request
+  answered as though it had been read. An image at a web address sent to
+  Bedrock was a `500` and is a `400` saying why. Through the Responses API, a
+  file given by `file_url` now reaches the provider, and an image given by
+  `file_id`, which no chat completion can name, is refused.
