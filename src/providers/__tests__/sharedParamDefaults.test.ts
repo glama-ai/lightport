@@ -41,7 +41,7 @@ describe('a default one provider names', () => {
   it('leaves each provider sending the model it chose', () => {
     // The providers that name one, and one that names none.
     expect(modelSentBy('z-ai')).toBe('glm-4.6');
-    expect(modelSentBy('nebius')).toBe('Qwen/Qwen2.5-72B-Instruct-fast');
+    expect(modelSentBy('dashscope')).toBe('qwen-turbo');
     expect(modelSentBy('requesty')).toBe('openai/gpt-4o-mini');
     expect(modelSentBy('openai')).toBe('gpt-3.5-turbo');
   });

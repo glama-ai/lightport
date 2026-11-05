@@ -507,3 +507,7 @@ that answered and said nothing:
   and Azure. One holding an image beside its text sent a block with no text,
   which Anthropic refuses. Each block is now read for itself, text kept and the
   rest left out, and an empty prompt sends nothing rather than an empty block.
+- Nebius was addressed at `api.studio.nebius.ai`, the host of the AI Studio that
+  Token Factory replaced, and defaulted to models absent from Token Factory's
+  catalog. It is now addressed at `api.tokenfactory.nebius.com`, and a request
+  naming no model is sent none rather than one that is gone.
