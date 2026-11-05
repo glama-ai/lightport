@@ -33,7 +33,21 @@ export function transformResponsesToChatCompletions(req: any): Params {
   } else if (Array.isArray(req.input)) {
     for (const item of req.input) {
       const msg = transformInputItem(item);
-      if (msg) messages.push(msg);
+      if (!msg) continue;
+
+      // A turn the model took is one assistant message however many items it
+      // was written down as. The Responses API lists each call a turn made as
+      // an item of its own, after whatever the turn said; a chat completion
+      // holds them in one message. Sent apart they were consecutive assistant
+      // messages, which Bedrock refuses outright and Gemini cannot pair with
+      // the results that follow — so parallel calls failed to round-trip.
+      const last = messages[messages.length - 1];
+      if (msg.tool_calls && last?.role === 'assistant') {
+        last.tool_calls = [...(last.tool_calls ?? []), ...msg.tool_calls];
+        continue;
+      }
+
+      messages.push(msg);
     }
   }
 
@@ -63,6 +77,9 @@ export function transformResponsesToChatCompletions(req: any): Params {
             parameters: t.parameters,
           },
         };
+        // The chat completion's own name for the same promise, which the
+        // providers that keep it read from there.
+        if (t.strict != null) tool.function.strict = t.strict;
         // Preserve cache_control for prompt caching (Anthropic, etc.)
         if (t.cache_control) tool.cache_control = t.cache_control;
         tools.push(tool);
@@ -164,13 +181,30 @@ function transformInputItem(item: any): Message | null {
         return {
           role: 'tool',
           tool_call_id: item.call_id,
-          content: item.output,
+          content: transformToolOutput(item.output),
         };
       }
       break;
   }
 
   return null;
+}
+
+/**
+ * A tool's output, which the Responses API takes as a string or as the same
+ * parts a message is made of.
+ *
+ * The parts were passed on as they came, `input_text` and all — a name no chat
+ * completion uses, so a provider reading for `text` found none and sent the
+ * model an empty result.
+ */
+function transformToolOutput(output: unknown): string | ContentType[] {
+  if (typeof output === 'string') return output;
+  if (Array.isArray(output)) return transformContent(output);
+
+  // Outside what the API describes, but a tool's result is what the model is
+  // waiting on, and an object is more use to it read as JSON than dropped.
+  return JSON.stringify(output);
 }
 
 /**

@@ -437,3 +437,10 @@ that answered and said nothing:
   adapter could not read past; and a call was numbered by its place in its chunk,
   so two calls in different chunks were both index 0 and a client assembled them
   into one. Every part is now read, and calls are numbered across the response.
+- A Responses request replaying a turn that made several calls failed on
+  Bedrock. The API lists each call as an item of its own, after whatever the turn
+  said, and each became an assistant message of its own; Converse refuses two
+  messages in a row from one role. A turn's text and calls are now one assistant
+  message. A tool output given as parts, rather than a string, reached the
+  provider as `input_text` parts no chat completion reads, and a function tool's
+  `strict` was dropped; both now arrive as the chat completion names them.

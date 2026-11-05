@@ -1,3 +1,4 @@
+import { BedrockConverseChatCompleteConfig } from '../../providers/bedrock/chatComplete';
 import { ProviderConfig } from '../../providers/types';
 import { OpenAIResponse } from '../../types/modelResponses';
 import { Message, Params, Options } from '../../types/requestBody';
@@ -191,6 +192,7 @@ describe('Responses Adapter', () => {
             type: 'object',
             properties: { location: { type: 'string' } },
           },
+          strict: true,
         },
       });
     });
@@ -253,6 +255,112 @@ describe('Responses Adapter', () => {
         tool_call_id: 'call_abc',
         content: '{"temperature": 20, "condition": "sunny"}',
       });
+    });
+
+    test('should hold the calls of one turn in one assistant message', () => {
+      const result = transformResponsesToChatCompletions({
+        model: 'claude-sonnet-4-5',
+        input: [
+          { role: 'user', content: 'Weather and time in Paris?' },
+          { type: 'function_call', call_id: 'call_a', name: 'weather', arguments: '{}' },
+          { type: 'function_call', call_id: 'call_b', name: 'time', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call_a', output: 'sunny' },
+          { type: 'function_call_output', call_id: 'call_b', output: 'noon' },
+        ],
+      } as any);
+      const messages = result.messages as any[];
+
+      expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'tool']);
+      expect(messages[1].tool_calls.map((c: any) => c.id)).toEqual(['call_a', 'call_b']);
+    });
+
+    test('should hold what a turn said with the calls it made', () => {
+      const result = transformResponsesToChatCompletions({
+        model: 'claude-sonnet-4-5',
+        input: [
+          { role: 'user', content: 'Weather in Paris?' },
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'Let me check.' }],
+          },
+          { type: 'function_call', call_id: 'call_a', name: 'weather', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call_a', output: 'sunny' },
+        ],
+      } as any);
+      const messages = result.messages as any[];
+
+      expect(messages).toHaveLength(3);
+      expect(messages[1]).toMatchObject({
+        role: 'assistant',
+        content: 'Let me check.',
+        tool_calls: [{ id: 'call_a' }],
+      });
+    });
+
+    test('should keep two turns that each made a call apart', () => {
+      const result = transformResponsesToChatCompletions({
+        model: 'claude-sonnet-4-5',
+        input: [
+          { role: 'user', content: 'Weather in Paris?' },
+          { type: 'function_call', call_id: 'call_a', name: 'weather', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call_a', output: 'sunny' },
+          { type: 'function_call', call_id: 'call_b', name: 'weather', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call_b', output: 'rain' },
+        ],
+      } as any);
+
+      expect((result.messages as any[]).map((m) => m.role)).toEqual([
+        'user',
+        'assistant',
+        'tool',
+        'assistant',
+        'tool',
+      ]);
+    });
+
+    test('should read a tool output given as parts', () => {
+      const result = transformResponsesToChatCompletions({
+        model: 'claude-sonnet-4-5',
+        input: [
+          { type: 'function_call', call_id: 'call_a', name: 'weather', arguments: '{}' },
+          {
+            type: 'function_call_output',
+            call_id: 'call_a',
+            output: [
+              { type: 'input_text', text: 'sunny' },
+              { type: 'input_text', text: '20C' },
+            ],
+          },
+        ],
+      } as any);
+
+      expect((result.messages as any[])[1].content).toEqual([
+        { type: 'text', text: 'sunny' },
+        { type: 'text', text: '20C' },
+      ]);
+    });
+
+    test('should send Bedrock parallel calls as one turn it accepts', () => {
+      const request = createComposedRequestTransform(BedrockConverseChatCompleteConfig)(
+        {
+          model: 'anthropic.claude-sonnet-4-5',
+          input: [
+            { role: 'user', content: 'Weather and time in Paris?' },
+            { type: 'function_call', call_id: 'call_a', name: 'weather', arguments: '{}' },
+            { type: 'function_call', call_id: 'call_b', name: 'time', arguments: '{}' },
+            { type: 'function_call_output', call_id: 'call_a', output: 'sunny' },
+            { type: 'function_call_output', call_id: 'call_b', output: 'noon' },
+          ],
+        } as any,
+        {},
+      );
+      const messages = request.messages as any[];
+
+      // Converse refuses two messages in a row from the same role.
+      expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+      expect(messages[1].content.filter((c: any) => c.toolUse)).toHaveLength(2);
+      expect(messages[2].content.filter((c: any) => c.toolResult)).toHaveLength(2);
     });
 
     test('should transform top_logprobs', () => {
