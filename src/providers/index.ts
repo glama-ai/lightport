@@ -78,6 +78,7 @@ import WorkersAiConfig from './workers-ai';
 import XAIConfig from './x-ai';
 import ZAIConfig from './z-ai';
 import ZhipuConfig from './zhipu';
+import DemonRouteConfig from './demonroute';
 
 const Providers: { [key: string]: ProviderConfigs } = {
   openai: OpenAIConfig,
@@ -159,6 +160,7 @@ const Providers: { [key: string]: ProviderConfigs } = {
   saladcloud: SaladCloudConfig,
   'scx-ai': SCXAIConfig,
   pinecone: PineconeConfig,
+  demonroute: DemonRouteConfig,
 };
 
 export default Providers;
