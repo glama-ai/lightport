@@ -156,7 +156,8 @@ export interface PerplexityAIChatCompletionStreamChunk {
     search_context_size?: string;
     cost?: Record<string, number>;
   };
-  choices: PerplexityAIChatChoice[];
+  // Absent from the chunks a deep-research model sends while it searches.
+  choices?: PerplexityAIChatChoice[];
 }
 
 export const PerplexityAIChatCompleteResponseTransform: (
@@ -236,12 +237,21 @@ export const PerplexityAIChatCompleteStreamChunkTransform: (
   fallbackId: string,
   streamState: any,
   strictOpenAiCompliance: boolean,
-) => string = (responseChunk, _fallbackId, _streamState, strictOpenAiCompliance) => {
+) => string | undefined = (responseChunk, _fallbackId, streamState, strictOpenAiCompliance) => {
   let chunk = responseChunk.trim();
   chunk = chunk.replace(/^data: /, '');
   chunk = chunk.trim();
 
+  // Perplexity ends its stream with `[DONE]`, as OpenAI does. Read as JSON it
+  // threw, so every stream finished with a truncation notice sent after its own
+  // end, and a Sentry event to go with it. The chunk carrying the finish reason
+  // has already been followed by one, so a second is not sent.
+  if (chunk === '[DONE]') {
+    return streamState.done ? undefined : `data: [DONE]\n\n`;
+  }
+
   const parsedChunk: PerplexityAIChatCompletionStreamChunk = parseJson(chunk);
+  const choice = parsedChunk.choices?.[0];
   const returnChunk =
     `data: ${JSON.stringify({
       id: parsedChunk.id,
@@ -255,21 +265,23 @@ export const PerplexityAIChatCompleteStreamChunkTransform: (
       choices: [
         {
           delta: {
-            role: parsedChunk.choices[0]?.delta.role,
-            content: parsedChunk.choices[0]?.delta.content,
-            ...(parsedChunk.choices[0]?.delta.reasoning_content && {
-              reasoning_content: parsedChunk.choices[0].delta.reasoning_content,
+            role: choice?.delta?.role,
+            content: choice?.delta?.content,
+            ...(choice?.delta?.reasoning_content && {
+              reasoning_content: choice.delta.reasoning_content,
             }),
           },
           index: 0,
-          finish_reason: parsedChunk.choices[0]?.finish_reason,
+          finish_reason: choice?.finish_reason ?? null,
         },
       ],
-      ...(parsedChunk.usage &&
-        parsedChunk.choices[0]?.finish_reason && { usage: parsedChunk.usage }),
+      ...(parsedChunk.usage && choice?.finish_reason && { usage: parsedChunk.usage }),
     })}` + '\n\n';
 
-  if (parsedChunk.choices[0]?.finish_reason) return returnChunk + `data: [DONE]\n\n`;
+  if (choice?.finish_reason) {
+    streamState.done = true;
+    return returnChunk + `data: [DONE]\n\n`;
+  }
 
   return returnChunk;
 };

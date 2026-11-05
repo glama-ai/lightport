@@ -462,3 +462,9 @@ that answered and said nothing:
   no deployment there — so any deployment not named after its model answered
   `DeploymentNotFound`. The `v1` API without a deployment id was sent no model at
   all. The deployment is now sent wherever one is named, and the model otherwise.
+- Every Perplexity stream ended with a truncation notice after its own end, and
+  a Sentry event. Perplexity closes its stream with `[DONE]`, which the transform
+  read as JSON and threw on, after it had already sent a `[DONE]` of its own. It
+  is now read as the end, and one `[DONE]` is sent. A chunk with no choices,
+  which a deep-research model streams while it searches, no longer throws, and a
+  chunk that has not finished says `finish_reason: null` as OpenAI's do.
