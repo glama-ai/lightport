@@ -9,8 +9,16 @@ const TritonAPIConfig: ProviderAPIConfig = {
   },
   getEndpoint: ({ fn }) => {
     switch (fn) {
-      case 'complete':
+      case 'complete': {
         return `/generate`;
+      }
+      case 'chatComplete':
+      case 'stream-chatComplete': {
+        return `/v1/chat/completions`;
+      }
+      case 'embed': {
+        return `/v1/embeddings`;
+      }
       default:
         return '';
     }
