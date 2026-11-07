@@ -1,5 +1,9 @@
 import { GROQ } from '../../globals';
-import { createModelResponseParams, createSpeechParams, responseTransformers } from '../open-ai-base';
+import {
+  createModelResponseParams,
+  createSpeechParams,
+  responseTransformers,
+} from '../open-ai-base';
 import { defineOpenAICompatibleProvider } from '../open-ai-base/define';
 import { GroqChatCompleteStreamChunkTransform } from './chatComplete';
 
@@ -12,7 +16,9 @@ const GroqConfig = defineOpenAICompatibleProvider({
     chatComplete: {
       path: '/v1/chat/completions',
       defaultModel: null,
-      exclude: ['logprobs', 'logits_bias', 'top_logprobs'],
+      // Groq names all three as taken by none of its models. The second was
+      // spelled `logits_bias`, which excluded nothing, so `logit_bias` was sent.
+      exclude: ['logprobs', 'logit_bias', 'top_logprobs'],
       extra: {
         service_tier: { param: 'service_tier', required: false },
         reasoning_effort: { param: 'reasoning_effort', required: false },
@@ -29,7 +35,14 @@ export default {
   createSpeech: createSpeechParams([]),
   api: {
     ...GroqConfig.api,
-    headers: ({ providerOptions, fn }: { providerOptions: any; fn: string; [key: string]: any }) => ({
+    headers: ({
+      providerOptions,
+      fn,
+    }: {
+      providerOptions: any;
+      fn: string;
+      [key: string]: any;
+    }) => ({
       ...(providerOptions.apiKey && { Authorization: `Bearer ${providerOptions.apiKey}` }),
       ...(['createTranscription', 'createTranslation'].includes(fn) && {
         'Content-Type': 'multipart/form-data',

@@ -1,3 +1,4 @@
+import { GatewayError } from '../../errors/GatewayError';
 import { openAiErrorEvent } from '../../errors/openAiError';
 import { fileExtensionMimeTypeMap } from '../../globals';
 import {
@@ -11,6 +12,7 @@ import {
 import { parseJson } from '../../utils/parseJson';
 import { ChatCompletionResponse, ErrorResponse, ProviderConfig } from '../types';
 import { generateInvalidProviderResponseError, transformFinishReason } from '../utils';
+import { readFilePart, unreadableFileMessage } from '../utils/filePart';
 import {
   AnthropicErrorObject,
   AnthropicErrorResponse,
@@ -93,6 +95,42 @@ interface AnthropicUrlImageContentItem {
     url: string;
   };
 }
+
+/*
+  OpenAI's service tiers, in the two Anthropic has. \`auto\` takes Priority Tier
+  capacity where the account has some and standard otherwise; \`standard_only\`
+  never does. OpenAI's \`default\` is the second and \`priority\` asks for the
+  first. \`flex\` and \`scale\` have no counterpart and are not sent, as the tier
+  was not sent at all before: passed through raw, Anthropic refuses every one of
+  OpenAI's names but \`auto\`.
+
+  Only Anthropic's own API takes this. Vertex and Azure build their Claude
+  configs on this one, so it is added where Anthropic's provider is assembled
+  rather than here, where it would reach them too.
+*/
+const ANTHROPIC_SERVICE_TIERS: Record<string, string> = {
+  auto: 'auto',
+  default: 'standard_only',
+  priority: 'auto',
+  standard_only: 'standard_only',
+};
+
+export const anthropicServiceTierParam = {
+  param: 'service_tier',
+  required: false,
+  transform: (params: Params) =>
+    typeof params.service_tier === 'string' &&
+    Object.hasOwn(ANTHROPIC_SERVICE_TIERS, params.service_tier)
+      ? ANTHROPIC_SERVICE_TIERS[params.service_tier]
+      : undefined,
+};
+
+/**
+ * The tier Anthropic says served a request, named as OpenAI names its own.
+ * Anthropic reports it inside \`usage\`; OpenAI's clients read it beside it.
+ */
+const openAiServiceTier = (tier: unknown) =>
+  typeof tier === 'string' ? (tier === 'standard' ? 'default' : tier) : undefined;
 
 interface AnthropicTextContentItem {
   type: 'text';
@@ -233,27 +271,47 @@ const transformAndAppendFileContentItem = (
   item: ContentType,
   transformedMessage: AnthropicMessage,
 ) => {
-  const mimeType =
-    (item.file?.mime_type as keyof typeof fileExtensionMimeTypeMap) || fileExtensionMimeTypeMap.pdf;
-  if (item.file?.file_url) {
-    transformedMessage.content.push({
-      type: 'document',
-      source: {
-        type: 'url',
-        url: item.file.file_url,
-      },
-    });
-  } else if (item.file?.file_data) {
-    const contentType = mimeType === fileExtensionMimeTypeMap.txt ? 'text' : 'base64';
-    transformedMessage.content.push({
-      type: 'document',
-      source: {
-        type: contentType,
-        data: item.file.file_data,
-        media_type: mimeType,
-      },
-    });
+  const file = readFilePart(item.file);
+  // Refused rather than skipped: the model was otherwise asked about a file it
+  // was never shown, and answered as though it had read it.
+  if (!file) {
+    throw new GatewayError(unreadableFileMessage('anthropic', item.file), 400);
   }
+
+  const cacheControl = (item as any).cache_control && {
+    cache_control: (item as any).cache_control,
+  };
+
+  if (file.url !== undefined) {
+    transformedMessage.content.push({
+      type: 'document',
+      source: { type: 'url', url: file.url },
+      ...cacheControl,
+    });
+    return;
+  }
+
+  // Plain text is sent as text, which is what Anthropic reads it as. Written as
+  // a data URL it is base64 like any other, and decoded here; written raw it was
+  // always the text itself.
+  if (file.mimeType === fileExtensionMimeTypeMap.txt) {
+    transformedMessage.content.push({
+      type: 'document',
+      source: {
+        type: 'text',
+        data: file.fromDataUrl ? Buffer.from(file.data, 'base64').toString('utf8') : file.data,
+        media_type: file.mimeType,
+      },
+      ...cacheControl,
+    });
+    return;
+  }
+
+  transformedMessage.content.push({
+    type: 'document',
+    source: { type: 'base64', data: file.data, media_type: file.mimeType },
+    ...cacheControl,
+  });
 };
 
 /**
@@ -360,17 +418,15 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
         // Transform the chat messages into a simple prompt
         if (params.messages) {
           params.messages.forEach((msg: Message & PromptCache) => {
-            if (
-              SYSTEM_MESSAGE_ROLES.includes(msg.role) &&
-              msg.content &&
-              typeof msg.content === 'object' &&
-              // An empty array has no first element, and reading through it threw.
-              // `content` is the caller's to write, so a system message sent as
-              // `[]` — which an SDK building content up from nothing will produce
-              // — came back as a 500 saying only that something had gone wrong.
-              msg.content[0]?.text
-            ) {
+            if (SYSTEM_MESSAGE_ROLES.includes(msg.role) && Array.isArray(msg.content)) {
+              // Each block is read for itself. Whether to read any was decided by
+              // the first alone, so a prompt opening with an empty block was
+              // dropped whole, and one holding an image beside its text sent a
+              // block with no text, which Anthropic refuses. Only text belongs in
+              // a system prompt, and Anthropic will not take it empty.
               msg.content.forEach((_msg) => {
+                if (typeof _msg.text !== 'string' || !_msg.text) return;
+
                 systemMessages.push({
                   text: _msg.text,
                   type: 'text',
@@ -379,7 +435,11 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
                   }),
                 });
               });
-            } else if (SYSTEM_MESSAGE_ROLES.includes(msg.role) && typeof msg.content === 'string') {
+            } else if (
+              SYSTEM_MESSAGE_ROLES.includes(msg.role) &&
+              typeof msg.content === 'string' &&
+              msg.content
+            ) {
               systemMessages.push({
                 ...(msg?.cache_control && {
                   cache_control: msg.cache_control,
@@ -536,7 +596,16 @@ interface AnthropicToolContentItem {
   input: Record<string, any>;
 }
 
-type AnthropicContentItem = AnthropicTextContentItem | AnthropicToolContentItem;
+interface AnthropicThinkingContentItem {
+  type: 'thinking';
+  thinking: string;
+  signature?: string;
+}
+
+type AnthropicContentItem =
+  | AnthropicTextContentItem
+  | AnthropicToolContentItem
+  | AnthropicThinkingContentItem;
 
 export interface AnthropicChatCompleteResponse {
   id: string;
@@ -551,6 +620,7 @@ export interface AnthropicChatCompleteResponse {
     output_tokens: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    service_tier?: string;
   };
 }
 
@@ -560,6 +630,7 @@ export interface AnthropicChatCompleteStreamResponse {
   delta: {
     type?: string;
     text?: string;
+    thinking?: string;
     partial_json?: string;
     stop_reason?: ANTHROPIC_STOP_REASON;
   };
@@ -583,6 +654,7 @@ export interface AnthropicChatCompleteStreamResponse {
       input_tokens?: number;
       cache_creation_input_tokens?: number;
       cache_read_input_tokens?: number;
+      service_tier?: string;
     };
   };
   error?: AnthropicErrorObject;
@@ -634,6 +706,10 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
       const promptTokens =
         input_tokens + (cache_read_input_tokens ?? 0) + (cache_creation_input_tokens ?? 0);
       const totalTokens = promptTokens + output_tokens;
+      const reasoning = response.content
+        .map((item) => (item.type === 'thinking' ? item.thinking : ''))
+        .join('');
+      const serviceTier = openAiServiceTier(response.usage?.service_tier);
 
       return {
         id: response.id,
@@ -641,11 +717,17 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
         created: Math.floor(Date.now() / 1000),
         model: response.model,
         provider: provider,
+        ...(serviceTier && { service_tier: serviceTier }),
         choices: [
           {
             message: {
               role: 'assistant',
               content,
+              // The thinking was only ever in `content_blocks`, which a caller
+              // asking for strict compliance — the default — is not sent, so
+              // they got none of it. `reasoning_content` is where every other
+              // provider here reports it, under either setting.
+              ...(reasoning && { reasoning_content: reasoning }),
               ...(!strictOpenAiCompliance && {
                 content_blocks: response.content.filter((item) => item.type !== 'tool_use'),
               }),
@@ -734,6 +816,7 @@ export const getAnthropicStreamChunkTransform = (
 
     if (parsedChunk.type === 'message_start' && parsedChunk.message?.usage) {
       streamState.model = parsedChunk?.message?.model ?? '';
+      streamState.serviceTier = openAiServiceTier(parsedChunk.message?.usage?.service_tier);
       streamState.usage = {
         input_tokens: parsedChunk.message?.usage?.input_tokens,
         cache_read_input_tokens: parsedChunk.message?.usage?.cache_read_input_tokens,
@@ -780,6 +863,9 @@ export const getAnthropicStreamChunkTransform = (
           created: Math.floor(Date.now() / 1000),
           model: streamState.model,
           provider: provider,
+          // Anthropic names the tier when the message starts; it is told with
+          // the usage, which is where a caller reading the bill looks.
+          ...(streamState.serviceTier && { service_tier: streamState.serviceTier }),
           choices: [
             {
               index: 0,
@@ -880,6 +966,11 @@ export const getAnthropicStreamChunkTransform = (
             delta: {
               content,
               role: 'assistant',
+              // As in the whole response: thinking reaches a strict caller here
+              // or not at all.
+              ...(parsedChunk.delta?.thinking && {
+                reasoning_content: parsedChunk.delta.thinking,
+              }),
               tool_calls: toolCalls.length ? toolCalls : undefined,
               ...(!strictOpenAiCompliance &&
                 !toolCalls.length && {

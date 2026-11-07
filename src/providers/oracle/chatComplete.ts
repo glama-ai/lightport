@@ -13,6 +13,15 @@ import {
 } from './types/GenericChatResponse';
 import { openAIToOracleRoleMap, oracleToOpenAIRoleMap } from './utils';
 
+/*
+  OpenAI's reasoning models take their limit as \`maxCompletionTokens\` on OCI —
+  it counts the reasoning as well as the answer — and OCI refuses \`maxTokens\`
+  for them, telling the caller to use the other. Both OpenAI names were sent as
+  \`maxTokens\`, so any of them given a limit failed with a 400, and OpenAI's own
+  SDKs set one routinely.
+*/
+const USES_MAX_COMPLETION_TOKENS = /^openai\.(gpt-5|o\d)/i;
+
 // transforms from openai format to oracle format for chat completions request
 export const OracleChatCompleteConfig: ProviderConfig = {
   model: [
@@ -20,7 +29,18 @@ export const OracleChatCompleteConfig: ProviderConfig = {
       param: 'chatRequest',
       required: true,
       transform: (params: Params, providerOptions: Options) => {
-        return transformUsingProviderConfig(OracleChatDetailsConfig, params, providerOptions);
+        const chatRequest = transformUsingProviderConfig(
+          OracleChatDetailsConfig,
+          params,
+          providerOptions,
+        );
+
+        if (USES_MAX_COMPLETION_TOKENS.test(params.model ?? '') && 'maxTokens' in chatRequest) {
+          chatRequest.maxCompletionTokens = chatRequest.maxTokens;
+          delete chatRequest.maxTokens;
+        }
+
+        return chatRequest;
       },
     },
     {

@@ -86,6 +86,55 @@ function readUInt32BE(buffer: Uint8Array, offset: number) {
   );
 }
 
+// How many bytes each fixed-size header value type of the event-stream encoding
+// takes: booleans none, then byte, short, integer, long, timestamp and UUID.
+// Types 6 and 7, a byte array and a string, carry their length instead.
+const AWS_HEADER_VALUE_SIZES: Record<number, number> = {
+  0: 0,
+  1: 0,
+  2: 1,
+  3: 2,
+  4: 4,
+  5: 8,
+  8: 8,
+  9: 16,
+};
+
+/**
+ * The string-valued headers of one event-stream message, by name.
+ *
+ * Read for `:message-type` and what accompanies it: an exception carries its
+ * name in `:exception-type`, and an error its code and message as headers with
+ * nothing in the payload at all.
+ */
+function readAWSHeaders(headers: Uint8Array): Record<string, string> {
+  const decoder = new TextDecoder();
+  const read: Record<string, string> = {};
+  let offset = 0;
+
+  while (offset < headers.length) {
+    const nameLength = headers[offset];
+    const name = decoder.decode(headers.subarray(offset + 1, offset + 1 + nameLength));
+    const type = headers[offset + 1 + nameLength];
+    offset += 2 + nameLength;
+
+    if (type === 6 || type === 7) {
+      const valueLength = (headers[offset] << 8) | headers[offset + 1];
+      if (type === 7) {
+        read[name] = decoder.decode(headers.subarray(offset + 2, offset + 2 + valueLength));
+      }
+      offset += 2 + valueLength;
+    } else if (type in AWS_HEADER_VALUE_SIZES) {
+      offset += AWS_HEADER_VALUE_SIZES[type];
+    } else {
+      // A type this does not know the size of leaves the rest unreadable.
+      break;
+    }
+  }
+
+  return read;
+}
+
 function getPayloadFromAWSChunk(chunk: Uint8Array): string {
   const decoder = new TextDecoder();
   const chunkLength = readUInt32BE(chunk, 0);
@@ -95,7 +144,25 @@ function getPayloadFromAWSChunk(chunk: Uint8Array): string {
 
   const payloadLength = chunkLength - headersEnd - 4;
   const payload = chunk.slice(headersEnd, headersEnd + payloadLength);
-  const decodedJson = parseJson<Record<string, any>>(decoder.decode(payload));
+  const headers = readAWSHeaders(chunk.subarray(12, headersEnd));
+  const text = decoder.decode(payload);
+
+  // A failure is named in the headers and explained in the payload, if at all.
+  // Handed on as the payload alone it lost its name — a throttle and a refused
+  // request read the same — so the name goes with it, under the key AWS's own
+  // JSON errors give it.
+  const messageType = headers[':message-type'];
+  if (messageType === 'exception' || messageType === 'error') {
+    const body = text ? parseJson<Record<string, any>>(text) : {};
+
+    return JSON.stringify({
+      ...body,
+      message: body.message ?? headers[':error-message'] ?? 'The stream failed',
+      __type: headers[':exception-type'] ?? headers[':error-code'],
+    });
+  }
+
+  const decodedJson = parseJson<Record<string, any>>(text);
   return decodedJson.bytes
     ? Buffer.from(decodedJson.bytes, 'base64').toString()
     : JSON.stringify(decodedJson);

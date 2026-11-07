@@ -41,7 +41,7 @@ describe('a default one provider names', () => {
   it('leaves each provider sending the model it chose', () => {
     // The providers that name one, and one that names none.
     expect(modelSentBy('z-ai')).toBe('glm-4.6');
-    expect(modelSentBy('nebius')).toBe('Qwen/Qwen2.5-72B-Instruct-fast');
+    expect(modelSentBy('dashscope')).toBe('qwen-turbo');
     expect(modelSentBy('requesty')).toBe('openai/gpt-4o-mini');
     expect(modelSentBy('openai')).toBe('gpt-3.5-turbo');
   });
@@ -53,5 +53,12 @@ describe('a default one provider names', () => {
     );
 
     expect(request.model).toBe('glm-4.5-air');
+  });
+});
+
+describe('a default model a provider withdrew', () => {
+  // SambaNova no longer serves the model its chat endpoint defaulted to.
+  it('is not sent to sambanova', () => {
+    expect(modelSentBy('sambanova')).toBeUndefined();
   });
 });

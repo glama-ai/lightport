@@ -37,5 +37,17 @@ export async function externalServiceFetch(url: string, options?: RequestInit, p
     ...options,
     ...(signals.length > 0 && { signal: AbortSignal.any(signals) }),
     dispatcher: agent,
+    // Never followed, and not left for a call site to ask for. The address a
+    // request is checked against is the one it starts at; a redirect names
+    // another that nothing checked, so a custom host answering 307 to the cloud
+    // metadata address had the gateway fetch it and hand the caller what came
+    // back. Each call site sees the redirect itself and treats it as a failure.
+    redirect: 'manual',
   });
 }
+
+/**
+ * Whether a response is a redirect left unfollowed — see `externalServiceFetch`.
+ */
+export const isRedirect = (response: Response): boolean =>
+  response.status >= 300 && response.status < 400;

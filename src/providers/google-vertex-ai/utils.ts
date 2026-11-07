@@ -1,3 +1,4 @@
+import { GatewayError } from '../../errors/GatewayError';
 import { BatchEndpoints, GOOGLE_VERTEX_AI, fileExtensionMimeTypeMap } from '../../globals';
 import { logger } from '../../logger';
 import { captureException } from '../../sentry/captureException';
@@ -8,6 +9,7 @@ import { externalServiceFetch } from '../../utils/fetch';
 import { fetchWorkloadIdentityToken } from '../../utils/gcpAuth';
 import { ErrorResponse, FinetuneRequest, Logprobs } from '../types';
 import { generateErrorResponse } from '../utils';
+import { readFilePart, unreadableFileMessage } from '../utils/filePart';
 import {
   GoogleErrorResponse,
   GoogleResponseCandidate,
@@ -955,6 +957,22 @@ export const transformInputAudioPart = (c: ContentType) => {
   };
 };
 
+/**
+ * A \`file\` part as Gemini takes one: its content inline, or its address for
+ * Gemini to fetch. Gemini read neither — a file sent this way never reached the
+ * model, and the answer came back as though it had.
+ */
+export const transformGeminiFilePart = (item: ContentType, provider: string) => {
+  const file = readFilePart(item.file);
+  if (!file) {
+    throw new GatewayError(unreadableFileMessage(provider, item.file), 400);
+  }
+
+  return file.url === undefined
+    ? { inlineData: { mimeType: file.mimeType, data: file.data } }
+    : { fileData: { mimeType: file.mimeType, fileUri: file.url } };
+};
+
 export const googleTools = [
   'googleSearch',
   'google_search',
@@ -964,6 +982,10 @@ export const googleTools = [
   'computer_use',
   'googleMaps',
   'google_maps',
+  // URL context, which has Gemini read the pages a prompt links to. Unnamed
+  // here it went out as a function of that name, for the caller to run.
+  'urlContext',
+  'url_context',
 ];
 
 export const transformGoogleTools = (tool: Tool) => {
@@ -991,6 +1013,8 @@ export const transformGoogleTools = (tool: Tool) => {
         enableWidget: tool.function.parameters?.enableWidget,
       },
     });
+  } else if (['urlContext', 'url_context'].includes(tool.function.name)) {
+    tools.push({ urlContext: {} });
   }
   return tools;
 };
@@ -1035,6 +1059,38 @@ const usesThinkingLevel = (model?: string) => {
 const canStopThinking = (model?: string) => /gemini-2\.5-flash/.test(model?.toLowerCase() ?? '');
 
 const THINKING_LEVELS = new Set(['minimal', 'low', 'medium', 'high']);
+
+const LEVEL_ORDER = ['minimal', 'low', 'medium', 'high'];
+
+/*
+  The levels a Gemini 3 model takes, where it is not all four. Google lists them
+  model by model and refuses the rest, so passing a level through as asked was a
+  400 for \`minimal\` to a Pro and \`medium\` to 3 Pro. Read in order, the most
+  particular first; a model none of them names takes all four.
+*/
+const LEVELS_BY_MODEL: [RegExp, string[]][] = [
+  [/gemini-3-pro/, ['low', 'high']],
+  [/flash-lite-image/, ['minimal', 'high']],
+  [/gemini-3\.8-flash/, ['low', 'medium', 'high']],
+  [/-pro/, ['low', 'medium', 'high']],
+];
+
+/**
+ * The level nearest the one asked for that the model takes. A tie goes to the
+ * deeper one, as the Pro models think at \`high\` unless told otherwise.
+ */
+const levelFor = (model: string | undefined, level: string): string => {
+  const name = model?.toLowerCase() ?? '';
+  const supported = LEVELS_BY_MODEL.find(([pattern]) => pattern.test(name))?.[1];
+  if (!supported || supported.includes(level)) return level;
+
+  const asked = LEVEL_ORDER.indexOf(level);
+  const distance = (candidate: string) => Math.abs(LEVEL_ORDER.indexOf(candidate) - asked);
+
+  return supported.reduce((nearest, candidate) =>
+    distance(candidate) <= distance(nearest) ? candidate : nearest,
+  );
+};
 
 const THINKING_BUDGETS: Record<string, number> = {
   minimal: 1024,
@@ -1085,8 +1141,9 @@ export const transformGeminiThinkingConfig = (
   }
 
   if (usesThinkingLevel(model)) {
-    if (THINKING_LEVELS.has(reasoningEffort.toLowerCase())) {
-      return { thinkingConfig: { includeThoughts: true, thinkingLevel: reasoningEffort } };
+    const level = reasoningEffort.toLowerCase();
+    if (THINKING_LEVELS.has(level)) {
+      return { thinkingConfig: { includeThoughts: true, thinkingLevel: levelFor(model, level) } };
     }
 
     // Gemini 3 has no level for a number of tokens, but does still take a

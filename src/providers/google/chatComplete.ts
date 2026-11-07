@@ -14,6 +14,7 @@ import { parseJson } from '../../utils/parseJson';
 import {
   getMimeType,
   recursivelyDeleteUnsupportedParameters,
+  transformGeminiFilePart,
   transformInputAudioPart,
   transformGeminiToolParameters,
   transformVertexLogprobs,
@@ -34,6 +35,7 @@ import {
   generateInvalidProviderResponseError,
   transformFinishReason,
 } from '../utils';
+import { geminiStreamDelta } from '../google-vertex-ai/streamDelta';
 import { GOOGLE_GENERATE_CONTENT_FINISH_REASON, LightportGeminiParams } from './types';
 
 const transformGenerationConfig = (params: LightportGeminiParams) => {
@@ -121,6 +123,39 @@ export const SYSTEM_INSTRUCTION_DISABLED_MODELS = [
   'gemini-pro',
   'gemini-pro-vision',
 ];
+
+/**
+ * The text of a message's content, as Gemini parts. Empty text is left out:
+ * Gemini refuses a part with nothing in it.
+ */
+export const geminiTextParts = (content: Message['content']): { text: string }[] => {
+  if (typeof content === 'string') return content ? [{ text: content }] : [];
+  if (!Array.isArray(content)) return [];
+
+  return content
+    .filter((part) => part.type === 'text' && part.text)
+    .map((part) => ({ text: part.text as string }));
+};
+
+/**
+ * Every system and developer message, as the one instruction Gemini takes.
+ *
+ * Only the first message was read, and of it only the first part, while every
+ * system message was kept out of the conversation — so an instruction given
+ * anywhere else was dropped without a word. That is any later system or
+ * developer message, and a Responses request with both \`instructions\` and a
+ * developer item among its input. Gemini has no system turn to put one in
+ * where it fell, so all of them are gathered here, in the order they came.
+ */
+export const transformGeminiSystemInstruction = (params: Params) => {
+  if (SYSTEM_INSTRUCTION_DISABLED_MODELS.includes(params.model as string)) return;
+
+  const parts = (params.messages ?? [])
+    .filter((message) => SYSTEM_MESSAGE_ROLES.includes(message.role))
+    .flatMap((message) => geminiTextParts(message.content));
+
+  return parts.length ? { parts, role: 'system' } : undefined;
+};
 
 export type GoogleMessageRole = 'user' | 'model' | 'system';
 
@@ -235,6 +270,9 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
           let parts = [];
 
           if (message.role === 'assistant' && message.tool_calls) {
+            // What the turn said before it called, which was dropped: only the
+            // calls were sent, so the model lost its own account of why.
+            parts.push(...geminiTextParts(message.content));
             message.tool_calls.forEach((tool_call: ToolCall) => {
               const thought_signature = getThoughtSignature(
                 params.model,
@@ -282,6 +320,8 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
                 });
               } else if (c.type === 'input_audio') {
                 parts.push(transformInputAudioPart(c));
+              } else if (c.type === 'file') {
+                parts.push(transformGeminiFilePart(c, GOOGLE));
               } else if (c.type === 'image_url') {
                 const { url, mime_type: passedMimeType, media_resolution } = c.image_url || {};
                 if (!url) return;
@@ -361,45 +401,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
     {
       param: 'systemInstruction',
       default: '',
-      transform: (params: Params) => {
-        // systemInstruction is only supported from gemini 1.5 models
-        if (SYSTEM_INSTRUCTION_DISABLED_MODELS.includes(params.model as string)) return;
-
-        const firstMessage = params.messages?.[0] || null;
-
-        if (!firstMessage) return;
-
-        if (
-          SYSTEM_MESSAGE_ROLES.includes(firstMessage.role) &&
-          typeof firstMessage.content === 'string'
-        ) {
-          return {
-            parts: [
-              {
-                text: firstMessage.content,
-              },
-            ],
-            role: 'system',
-          };
-        }
-
-        if (
-          SYSTEM_MESSAGE_ROLES.includes(firstMessage.role) &&
-          typeof firstMessage.content === 'object' &&
-          firstMessage.content?.[0]?.text
-        ) {
-          return {
-            parts: [
-              {
-                text: firstMessage.content?.[0].text,
-              },
-            ],
-            role: 'system',
-          };
-        }
-
-        return;
-      },
+      transform: (params: Params) => transformGeminiSystemInstruction(params),
     },
   ],
   temperature: {
@@ -645,7 +647,9 @@ export const GoogleChatCompleteResponseTransform: (
     const {
       promptTokenCount,
       cachedContentTokenCount = 0,
-      candidatesTokenCount,
+      // Left out by Gemini when it is zero — a reply spent wholly on thinking —
+      // and a missing count summed to NaN, reported as null.
+      candidatesTokenCount = 0,
       totalTokenCount,
       thoughtsTokenCount = 0,
     } = response.usageMetadata;
@@ -775,7 +779,9 @@ export const GoogleChatCompleteStreamChunkTransform: (
     const {
       promptTokenCount,
       cachedContentTokenCount = 0,
-      candidatesTokenCount,
+      // Left out by Gemini when it is zero — a reply spent wholly on thinking —
+      // and a missing count summed to NaN, reported as null.
+      candidatesTokenCount = 0,
       totalTokenCount,
       thoughtsTokenCount = 0,
     } = parsedChunk.usageMetadata;
@@ -803,90 +809,31 @@ export const GoogleChatCompleteStreamChunkTransform: (
       provider: 'google',
       choices:
         parsedChunk.candidates?.map((generation, index) => {
-          let message: any = { role: 'assistant', content: '' };
+          const candidateIndex = generation.index ?? index;
           const finishReason = generation.finishReason
             ? transformFinishReason(generation.finishReason, strictOpenAiCompliance)
             : null;
-          if (generation.content?.parts?.[0]?.text) {
-            const contentBlocks = [];
-            let content = '';
-            for (const part of generation.content.parts) {
-              if (part.thought) {
-                contentBlocks.push({
-                  index: 0,
-                  delta: { thinking: part.text },
-                });
-                streamState.containsChainOfThoughtMessage = true;
-              } else {
-                content += part.text ?? '';
-                contentBlocks.push({
-                  index: streamState.containsChainOfThoughtMessage ? 1 : 0,
-                  delta: { text: part.text },
-                });
-              }
-            }
-            message = {
-              role: 'assistant',
-              content,
-              ...(!strictOpenAiCompliance &&
-                contentBlocks.length && { content_blocks: contentBlocks }),
-            };
-          } else if (generation.content?.parts?.[0]?.functionCall) {
-            streamState.hasToolCalls = true;
-            message = {
-              role: 'assistant',
-              tool_calls: generation.content.parts.map((part, idx) => {
-                if (part.functionCall) {
-                  return {
-                    index: idx,
-                    id: getOrGenerateId(undefined, 'toolCall'),
-                    type: 'function',
-                    function: {
-                      name: part.functionCall.name,
-                      arguments: JSON.stringify(part.functionCall.args),
-                      ...(!strictOpenAiCompliance &&
-                        part.thoughtSignature && {
-                          thought_signature: part.thoughtSignature,
-                        }),
-                    },
-                  };
-                }
-              }),
-            };
-          } else if (generation.content?.parts?.[0]?.inlineData) {
-            const part = generation.content.parts[0];
-            const contentBlocks = [
-              {
-                index: streamState.containsChainOfThoughtMessage ? 1 : 0,
-                delta: {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${part.inlineData?.mimeType};base64,${part.inlineData?.data}`,
-                  },
-                },
-              },
-            ];
-            message = {
-              role: 'assistant',
-              content_blocks: contentBlocks,
-            };
-          } else if (generation.finishMessage) {
-            // Handle cases where content is empty (e.g., MALFORMED_FUNCTION_CALL)
-            message = {
-              role: 'assistant',
-              content: generation.finishMessage,
-            };
-          }
+          const message = geminiStreamDelta(
+            generation,
+            candidateIndex,
+            streamState,
+            strictOpenAiCompliance,
+          );
           return {
             delta: message,
-            index: generation.index ?? index,
+            index: candidateIndex,
             finish_reason: finishReason && streamState.hasToolCalls ? 'tool_calls' : finishReason,
             ...(!strictOpenAiCompliance && generation.groundingMetadata
               ? { groundingMetadata: generation.groundingMetadata }
               : {}),
           };
         }) ?? [],
-      ...(parsedChunk.usageMetadata?.candidatesTokenCount && {
+      // Sent once the model has said something, as before, and on the chunk that
+      // ends the reply whatever it said: a reply spent wholly on thinking has no
+      // count of its own, and finished without reporting what it used.
+      ...((parsedChunk.usageMetadata?.candidatesTokenCount ||
+        (parsedChunk.usageMetadata &&
+          parsedChunk.candidates?.some((candidate) => candidate.finishReason))) && {
         usage: usageMetadata,
       }),
     })}` + '\n\n'

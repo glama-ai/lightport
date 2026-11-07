@@ -44,6 +44,64 @@ describe('a system message whose content is an empty array', () => {
     }
   });
 
+  // Whether to read the blocks at all was decided by the first one.
+  it.each(configs)('%s keeps a prompt that opens with an empty block', (_name, config) => {
+    const { system } = transformUsingProviderConfig(
+      config as ProviderConfig,
+      {
+        model: 'claude',
+        messages: [
+          {
+            role: 'system',
+            content: [
+              { type: 'text', text: '' },
+              { type: 'text', text: 'Be terse.' },
+            ],
+          },
+          { role: 'user', content: 'hi' },
+        ],
+      } as Params,
+    );
+
+    expect(system).toEqual([{ text: 'Be terse.', type: 'text' }]);
+  });
+
+  it.each(configs)('%s sends no textless block for an image beside the text', (_name, config) => {
+    const { system } = transformUsingProviderConfig(
+      config as ProviderConfig,
+      {
+        model: 'claude',
+        messages: [
+          {
+            role: 'system',
+            content: [
+              { type: 'text', text: 'Be terse.' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBO' } },
+            ],
+          },
+          { role: 'user', content: 'hi' },
+        ],
+      } as Params,
+    );
+
+    expect(system).toEqual([{ text: 'Be terse.', type: 'text' }]);
+  });
+
+  it.each(configs)('%s sends no empty block for an empty prompt', (_name, config) => {
+    const { system } = transformUsingProviderConfig(
+      config as ProviderConfig,
+      {
+        model: 'claude',
+        messages: [
+          { role: 'system', content: '' },
+          { role: 'user', content: 'hi' },
+        ],
+      } as Params,
+    );
+
+    expect(system).toEqual([]);
+  });
+
   it('a tool result with nothing before it does not fail the request either', () => {
     // The same class, in the transform beside it: the result is appended to the
     // message before it, and there is not always one to append to.

@@ -217,6 +217,8 @@ export interface BedrockChatCompleteStreamChunk {
     };
   };
   message?: string;
+  /** The exception's name, from the event-stream headers it arrived with. */
+  __type?: string;
   stopReason?: BEDROCK_CONVERSE_STOP_REASON;
   metrics?: {
     latencyMs: number;

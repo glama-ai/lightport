@@ -27,9 +27,12 @@ const modelSentBy = (name: string) => {
   if (!config) return undefined;
 
   try {
-    return transformUsingProviderConfig(config as ProviderConfig, {
-      messages: [{ role: 'user', content: 'hi' }],
-    } as Params).model;
+    return transformUsingProviderConfig(
+      config as ProviderConfig,
+      {
+        messages: [{ role: 'user', content: 'hi' }],
+      } as Params,
+    ).model;
   } catch {
     // A provider whose config demands options a bare call cannot supply. It is
     // not sending OpenAI's model either way.

@@ -261,6 +261,31 @@ describe('what workers-ai answers with', () => {
     expect(result.choices[0].finish_reason).toBe('tool_calls');
   });
 
+  // That route gives no ids, and numbering from 0 in every reply gave a later
+  // turn's calls the ids of an earlier one's.
+  it('gives each tool call an id of its own across replies', () => {
+    const reply = () =>
+      complete({
+        result: {
+          response: '',
+          tool_calls: [
+            { name: 'get_weather', arguments: { city: 'London' } },
+            { name: 'get_time', arguments: { zone: 'GMT' } },
+          ],
+        },
+        success: true,
+        errors: [],
+        messages: [],
+      }) as ChatCompletionResponse;
+
+    const ids = [reply(), reply()].flatMap((result) =>
+      (result.choices[0].message.tool_calls ?? []).map((call: { id: string }) => call.id),
+    );
+
+    expect(new Set(ids).size).toBe(4);
+    expect(ids.every((id) => id.startsWith('call_'))).toBe(true);
+  });
+
   it('does not fall over on an empty result', () => {
     const result = complete({ result: null, success: true, errors: [], messages: [] }) as any;
 

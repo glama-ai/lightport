@@ -10,9 +10,12 @@ const SambaNovaConfig = defineOpenAICompatibleProvider({
   name: SAMBANOVA,
   baseURL: 'https://api.sambanova.ai',
   endpoints: {
+    // No model is defaulted, as for completions below: the one this named has
+    // been withdrawn, and a request that does not choose is better told so than
+    // sent to a model that is gone.
     chatComplete: {
       path: '/v1/chat/completions',
-      defaultModel: 'Meta-Llama-3.1-8B-Instruct',
+      defaultModel: null,
       exclude: [
         'functions',
         'function_call',
@@ -46,7 +49,10 @@ export default {
     ...responseTransformers(SAMBANOVA, {
       complete: true,
       chatComplete: (response, isError) => {
-        if (isError || !('choices' in response)) return response;
+        // A failure is read by the shared reader, into the envelope a caller
+        // expects; see `CustomTransformer`.
+        if (isError) return undefined;
+        if (!('choices' in response)) return response;
 
         return {
           ...response,

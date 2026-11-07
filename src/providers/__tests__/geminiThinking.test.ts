@@ -147,3 +147,35 @@ describe('a request carrying both a thinking block and an effort', () => {
     }
   });
 });
+
+// Google lists the levels each Gemini 3 model takes, and refuses the rest.
+describe('the level a gemini 3 model is sent', () => {
+  const levelFor = (model: string, effort: string) =>
+    both({ model, reasoning_effort: effort }).map(
+      (config: any) => config.thinkingConfig.thinkingLevel,
+    );
+
+  it.each([
+    ['gemini-3-pro-preview', 'minimal', 'low'],
+    ['gemini-3-pro-preview', 'medium', 'high'],
+    ['gemini-3.1-pro-preview', 'minimal', 'low'],
+    ['gemini-3.1-flash-lite-image', 'low', 'minimal'],
+    ['gemini-3.1-flash-lite-image', 'medium', 'high'],
+    ['gemini-3.8-flash', 'minimal', 'low'],
+  ])('is one %s takes when %s is not', (model, effort, sent) => {
+    expect(levelFor(model, effort)).toEqual([sent, sent]);
+  });
+
+  it.each([
+    ['gemini-3-flash-preview', 'minimal'],
+    ['gemini-3-flash-preview', 'medium'],
+    ['gemini-3.1-pro-preview', 'medium'],
+    ['gemini-3-pro-preview', 'high'],
+  ])('is the one asked for where %s takes %s', (model, effort) => {
+    expect(levelFor(model, effort)).toEqual([effort, effort]);
+  });
+
+  it('is sent in the case Gemini reads it', () => {
+    expect(levelFor('gemini-3-flash-preview', 'High')).toEqual(['high', 'high']);
+  });
+});

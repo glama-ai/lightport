@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import ProviderConfigs from '../../index';
 import { responseTransformers } from '..';
 
 const chatComplete = (provider = 'testprovider') =>
@@ -36,10 +37,7 @@ describe('a failure the provider did not write in OpenAI shape', () => {
     // What an `application/problem+json` failure looks like — RFC 7807. Served
     // verbatim by more than one provider, and unreadable to an OpenAI client
     // until it is named.
-    const answer = chatComplete()(
-      { status: 401, title: 'Unauthorized', type: 'about:blank' },
-      401,
-    );
+    const answer = chatComplete()({ status: 401, title: 'Unauthorized', type: 'about:blank' }, 401);
 
     expect(answer.error.message).toBe('testprovider error: Unauthorized');
     expect(answer.error.code).toBe('401');
@@ -173,6 +171,43 @@ describe('a provider that brought its own transformer', () => {
   });
 });
 
+describe('a provider whose transformer reads only its answers', () => {
+  // SambaNova and Lemonfox reshape a successful reply and have nothing to say
+  // about a failure, which reached the caller as the provider wrote it.
+  it.each(['sambanova', 'lemonfox-ai'])(
+    '%s sends a failure in the envelope every other failure arrives in',
+    (provider) => {
+      const transform = (ProviderConfigs as any)[provider].responseTransforms.chatComplete;
+
+      expect(transform({ 'html-message': '<html>502 Bad Gateway</html>' }, 502)).toEqual({
+        error: {
+          code: null,
+          message: `${provider} error: <html>502 Bad Gateway</html>`,
+          param: null,
+          type: null,
+        },
+        provider,
+      });
+      expect(
+        transform({ error: { message: 'Rate limited', type: 'rate_limit' } }, 429),
+      ).toMatchObject({
+        error: { message: `${provider} error: Rate limited`, type: 'rate_limit' },
+        provider,
+      });
+    },
+  );
+
+  it('still reshapes their answers', () => {
+    const transform = (ProviderConfigs as any).sambanova.responseTransforms.chatComplete;
+    const result = transform(
+      { choices: [{ finish_reason: 'stop', index: 0, message: { content: 'hi' } }], id: 'x' },
+      200,
+    );
+
+    expect(result.choices[0].message).toEqual({ content: 'hi', role: 'assistant' });
+  });
+});
+
 describe('an answer in a shape the caller cannot use', () => {
   // A 200 is not a promise that the body is readable, and the first thing done
   // with `choices` is to walk it.
@@ -193,7 +228,9 @@ describe('an answer in a shape the caller cannot use', () => {
 describe("a reasoning model's thinking", () => {
   const reasoned = {
     id: 'x',
-    choices: [{ message: { role: 'assistant', content: 'four', reasoning_content: 'two plus two' } }],
+    choices: [
+      { message: { role: 'assistant', content: 'four', reasoning_content: 'two plus two' } },
+    ],
   };
 
   it('is given the shape the Responses adapter reads', () => {
@@ -215,7 +252,12 @@ describe("a reasoning model's thinking", () => {
   });
 
   it('says nothing when the model did no thinking', () => {
-    const answer = chatComplete()({ id: 'x', choices: [{ message: { content: 'hi' } }] }, 200, undefined, false);
+    const answer = chatComplete()(
+      { id: 'x', choices: [{ message: { content: 'hi' } }] },
+      200,
+      undefined,
+      false,
+    );
 
     expect(answer.choices[0].message.content_blocks).toBeUndefined();
   });

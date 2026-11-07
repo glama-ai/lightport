@@ -10,8 +10,9 @@ import { setRequestTags } from '../sentry/setRequestTags';
 import transformToProviderRequest from '../services/transformToProviderRequest';
 import type { GatewayContext } from '../types/GatewayContext';
 import { Options, Params } from '../types/requestBody';
-import { externalServiceFetch } from '../utils/fetch';
+import { externalServiceFetch, isRedirect } from '../utils/fetch';
 import { applyAdapterRequestTransform, adaptResponse, AdapterContext } from './adapterUtils';
+import { ambientIdentityRefusal } from './ambientIdentity';
 import { responseHandler } from './responseHandlers';
 import { Readable } from 'stream';
 
@@ -234,6 +235,12 @@ async function postToProvider(
 
   const url = `${baseUrl}${endpoint}`;
 
+  // Before the headers are built, since building them is what mints the token.
+  const identityRefusal = ambientIdentityRefusal(provider, providerOption, url);
+  if (identityRefusal) {
+    throw new GatewayError(identityRefusal, 400);
+  }
+
   // Check for custom request handler (e.g., bedrock AWS signing)
   const requestHandlers = providerConfig.requestHandlers;
   if (requestHandlers && requestHandlers[fn]) {
@@ -245,9 +252,7 @@ async function postToProvider(
     // Fold the timeout into the same ambient signal, and tell a timeout apart
     // from a caller hangup the way the main path below does.
     const customRequestTimeout =
-      Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) ||
-      providerOption.requestTimeout ||
-      null;
+      Number(requestHeaders[HEADER_KEYS.REQUEST_TIMEOUT]) || providerOption.requestTimeout || null;
 
     const invokeRequestHandler = () =>
       requestHandlers[fn]!({
@@ -295,7 +300,7 @@ async function postToProvider(
       c,
       customResponse,
       isStreamingMode,
-      provider,
+      providerOption,
       fn,
       url,
       false,
@@ -429,13 +434,27 @@ async function postToProvider(
     }
   }
 
+  // A redirect is answered rather than followed — see `externalServiceFetch`.
+  // Passed on as it came, it would hand the caller the address the gateway
+  // refused to fetch, for the caller's client to follow instead.
+  if (isRedirect(response)) {
+    await response.body?.cancel().catch(() => {});
+    response = openAiErrorResponse(
+      {
+        message: 'The provider answered with a redirect, which the gateway does not follow',
+        type: 'api_error',
+      },
+      502,
+    );
+  }
+
   // Transform the response
   const { response: mappedResponse } = await measureStage('read', () =>
     responseHandler(
       c,
       response,
       isStreamingMode,
-      provider,
+      providerOption,
       fn,
       url,
       false,

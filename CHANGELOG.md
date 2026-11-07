@@ -86,6 +86,26 @@ answer to be arrived at differently rather than for a different answer, so the
 request still means what it said and is served — with a warning in the log naming
 what nothing acted on.
 
+**A provider's redirect is no longer followed.**
+
+The address a request is checked against is the one it starts at, and a
+redirect names another that nothing checked: a custom host answering `307` with
+the cloud metadata address had the gateway fetch it and return what it found. A
+redirect from any provider is now a `502` saying so, with no `Location` passed
+on. A custom host written as `http://` for a server that upgrades to `https://`
+by redirecting needs writing as the address it redirects to.
+
+**The gateway's own identity is only sent to the provider it is for.**
+
+`azure_auth_mode` `managed` and `workload`, and `vertex_auth_type` `workload`,
+send a token minted for the machine the gateway runs on rather than one the
+caller holds. Every other setting can choose the host — `custom_host`, an Azure
+Foundry URL, or a resource name or region that ends the provider's hostname
+early — so any caller could have that token sent wherever they liked. With those
+modes a request now goes to Azure's or Vertex's own hosts or is refused with a
+`400`. A private endpoint or proxy in front of either is out of reach with them;
+credentials the caller supplies still go anywhere a custom host can.
+
 ### Added
 
 **Requesty is available as a provider.** It routes to models from several houses
@@ -397,3 +417,142 @@ that answered and said nothing:
   disagreeing whenever the cache was used. The total is now derived from the two
   counts beside it, in the streamed response as well as the whole one, which
   holds whichever of the two Bedrock meant.
+- Hugging Face failed every request that named no `huggingface_base_url`. The
+  default was `api-inference.huggingface.co`, which no longer resolves, with the
+  model in the path; it is now the router, `router.huggingface.co`, with the
+  model in the body where the router reads it. The router serves chat
+  completions alone, so a text completion without a base URL is refused with a
+  `400` naming the setting that would serve it.
+- AI21 failed every request. Chat went to `/{model}/chat` with Jurassic-2's
+  parameter names and was read back expecting Jurassic-2's `outputs`; that path
+  answers 404, as do the `/{model}/complete` and `/embed` it also claimed. Jamba
+  is served at `/v1/chat/completions` in OpenAI's shape, and AI21 is now declared
+  on the shared base against it, sending the parameters AI21 documents and its
+  own `documents`. Text completions are refused with a `400` rather than sent
+  where they 404.
+- Gemini, on Google and Vertex, streamed tool calls wrong three ways. A chunk was
+  read as whichever kind its first part was, so a call that followed text or a
+  thought in the same chunk was dropped and the response finished as `stop`; a
+  call followed by text sent `tool_calls: [{…}, null]`, which the Responses
+  adapter could not read past; and a call was numbered by its place in its chunk,
+  so two calls in different chunks were both index 0 and a client assembled them
+  into one. Every part is now read, and calls are numbered across the response.
+- A Responses request replaying a turn that made several calls failed on
+  Bedrock. The API lists each call as an item of its own, after whatever the turn
+  said, and each became an assistant message of its own; Converse refuses two
+  messages in a row from one role. A turn's text and calls are now one assistant
+  message. A tool output given as parts, rather than a string, reached the
+  provider as `input_text` parts no chat completion reads, and a function tool's
+  `strict` was dropped; both now arrive as the chat completion names them.
+- A file sent the way OpenAI sends one — `file_data` a data URL, the name as
+  `filename` — was refused by Anthropic and Bedrock, which were handed the data
+  URL where raw base64 belonged, and never reached Gemini, which read no `file`
+  parts at all. All three now read it, and the shape first taken, raw content
+  beside a `mime_type`, still works. On Bedrock a document is now named as
+  Converse allows, without the extension whose dot alone was refused, and with
+  the format Converse calls it — `txt`, `docx` — rather than the MIME subtype.
+  A file a provider cannot read, named by id alone or at a web address Bedrock
+  cannot fetch, is refused with a `400` rather than left out of a request
+  answered as though it had been read. An image at a web address sent to
+  Bedrock was a `500` and is a `400` saying why. Through the Responses API, a
+  file given by `file_url` now reaches the provider, and an image given by
+  `file_id`, which no chat completion can name, is refused.
+- An Azure OpenAI Responses request on a dated `api-version` was sent the
+  model's name as `model`, where Azure reads the deployment's — the address names
+  no deployment there — so any deployment not named after its model answered
+  `DeploymentNotFound`. The `v1` API without a deployment id was sent no model at
+  all. The deployment is now sent wherever one is named, and the model otherwise.
+- Every Perplexity stream ended with a truncation notice after its own end, and
+  a Sentry event. Perplexity closes its stream with `[DONE]`, which the transform
+  read as JSON and threw on, after it had already sent a `[DONE]` of its own. It
+  is now read as the end, and one `[DONE]` is sent. A chunk with no choices,
+  which a deep-research model streams while it searches, no longer throws, and a
+  chunk that has not finished says `finish_reason: null` as OpenAI's do.
+- An exception Bedrock sent mid-stream — a throttle, a refused image, a model
+  that failed — ended the stream as a finished reply: a chunk with
+  `finish_reason: stop`, a `[DONE]`, and the message thrown away. It now reaches
+  the caller as an error frame carrying Bedrock's message, with the exception's
+  name, read from the event-stream headers it arrived with, as its `type` and
+  `code`.
+- Claude's thinking — on Anthropic, Vertex, Azure and Bedrock, which reports
+  every Converse reasoner's the same way — was only in `content_blocks`, which a
+  caller asking for strict compliance, the default, is not sent. Such a caller
+  got none of it, streamed or not. It is now in `reasoning_content` as well,
+  where every other provider here reports thinking, under either setting.
+- Gemini, on Google and Vertex, read only the first message as its system
+  instruction, and only that message's first part, while keeping every system
+  message out of the conversation — so any later system or developer message was
+  dropped without a word. That includes a Responses request with `instructions`
+  and a developer item, as Codex sends. Every system and developer message is now
+  gathered into the instruction, in order. An assistant turn's text, sent beside
+  its `tool_calls`, was dropped too, and now goes ahead of the calls.
+- A Gemini reply spent wholly on thinking reported `completion_tokens: null`,
+  and streamed, no usage at all. Gemini leaves its candidate count out when it is
+  zero, and the missing count was summed as though present. It now counts as
+  zero, and the chunk that ends a reply carries its usage whatever it said.
+  Vertex likewise reports `cached_tokens: 0` rather than leaving it out.
+- A reasoning effort was sent to a Gemini 3 model as asked, and Google refuses
+  the levels a model does not take: `minimal` to a Pro, `medium` to 3 Pro. It is
+  now sent as the nearest level the model does take.
+- Cerebras chat completions held back six parameters its reference documents —
+  `frequency_penalty`, `presence_penalty`, `logit_bias`, `logprobs`,
+  `parallel_tool_calls` and `service_tier` — and sent `top_logprobs` without the
+  `logprobs` it needs, which Cerebras refuses. All are now sent.
+- Oracle sent a token limit for OpenAI's reasoning models — GPT-5 and the
+  o-series — as `maxTokens`, which OCI refuses for them in favour of
+  `maxCompletionTokens`, so any such request with a limit failed. Their limit is
+  now sent under the name OCI reads.
+- A system message written as blocks was read only if its first block had text,
+  so one opening with an empty block lost the whole prompt on Anthropic, Vertex
+  and Azure. One holding an image beside its text sent a block with no text,
+  which Anthropic refuses. Each block is now read for itself, text kept and the
+  rest left out, and an empty prompt sends nothing rather than an empty block.
+- Nebius was addressed at `api.studio.nebius.ai`, the host of the AI Studio that
+  Token Factory replaced, and defaulted to models absent from Token Factory's
+  catalog. It is now addressed at `api.tokenfactory.nebius.com`, and a request
+  naming no model is sent none rather than one that is gone.
+- Gemini's URL context tool, named `url_context` or `urlContext`, was sent as a
+  function of that name for the caller to run, rather than as the tool Gemini
+  runs itself. It is now sent as `urlContext`, beside search and maps.
+- Anthropic was never sent a `service_tier`, so asking for standard capacity
+  alone had no effect, and the tier that served a request was never reported.
+  OpenAI's names are now sent as Anthropic's — `auto` and `priority` as `auto`,
+  `default` as `standard_only` — and the rest, which Anthropic has no tier for,
+  are not sent. The tier is reported beside the usage, as `service_tier`, where
+  OpenAI's clients read it. Claude on Vertex and Azure, which take no such field,
+  is not sent it.
+- A failed chat completion from SambaNova or Lemonfox reached the caller as the
+  provider wrote it — an HTML error page from something in front of the API,
+  among others — rather than in the error envelope every other failure arrives
+  in. Both bring a transformer for their answers, which handed failures back
+  untouched; a failure is now left to the shared reader.
+- The prompt sent to Bedrock's legacy Cohere and AI21 models opened with
+  `system: [object Object],[object Object]` — the message list rather than the
+  system message — and any message sent as parts read `[object Object]`. Both are
+  now their text.
+- A Fireworks text-completion stream chunk with no choices — the usage chunk an
+  OpenAI-compatible server sends last — was read through its first choice and
+  threw, cutting the stream short and losing the usage. It is now passed on with
+  `choices: []` and its usage.
+- An Anthropic OAuth access token, `sk-ant-oat…`, matched the test for an API key
+  and was sent as `X-API-Key`, which Anthropic refuses, without the beta that has
+  Anthropic read it as a token. It is now sent as a bearer token with
+  `oauth-2025-04-20` added to the caller's betas.
+- A Claude deployment on Azure AI Foundry was sent its request in Anthropic's
+  shape and had its answer read as Azure's own, so the caller got an unreadable
+  completion, streamed or not. The response transforms were chosen with no
+  provider options, and Azure AI chooses them by whether its Foundry URL names an
+  Anthropic deployment. They are now chosen with the options the request was
+  sent with.
+- A streamed Responses request reported `cached_tokens: 0` and
+  `reasoning_tokens: 0` whatever the provider counted, where the same request
+  unstreamed reported both. Both are now read from the usage the provider sent.
+- Groq was sent `logit_bias`, which it says none of its models take. The
+  exclusion meant to hold it back was spelled `logits_bias` and excluded nothing.
+- SambaNova chat completions defaulted to `Meta-Llama-3.1-8B-Instruct`, which
+  SambaNova has withdrawn, so a request naming no model was sent to one that is
+  gone. No model is defaulted now, as for its text completions.
+- Workers AI tool calls read from the shape of the route it left, kept for a
+  custom host mapped onto that route, were numbered `"0"`, `"1"`… in every reply,
+  so a later turn's calls shared the ids of an earlier one's. Each now has an id
+  of its own.

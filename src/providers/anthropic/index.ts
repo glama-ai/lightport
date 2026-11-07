@@ -3,6 +3,7 @@ import { ProviderConfigs } from '../types';
 import AnthropicAPIConfig from './api';
 import {
   AnthropicChatCompleteConfig,
+  anthropicServiceTierParam,
   getAnthropicChatCompleteResponseTransform,
   getAnthropicStreamChunkTransform,
 } from './chatComplete';
@@ -15,7 +16,8 @@ import { AnthropicMessagesConfig, AnthropicMessagesResponseTransform } from './m
 
 const AnthropicConfig: ProviderConfigs = {
   complete: AnthropicCompleteConfig,
-  chatComplete: AnthropicChatCompleteConfig,
+  // The tier is Anthropic's own API's alone; see `anthropicServiceTierParam`.
+  chatComplete: { ...AnthropicChatCompleteConfig, service_tier: anthropicServiceTierParam },
   messages: AnthropicMessagesConfig,
   messagesCountTokens: AnthropicMessagesConfig,
   api: AnthropicAPIConfig,

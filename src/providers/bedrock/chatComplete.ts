@@ -9,6 +9,8 @@ import {
   Options,
   ToolChoiceObject,
 } from '../../types/requestBody';
+import { GatewayError } from '../../errors/GatewayError';
+import { openAiErrorEvent } from '../../errors/openAiError';
 import { parseJson } from '../../utils/parseJson';
 import {
   ChatCompletionResponse,
@@ -34,9 +36,14 @@ import {
   BedrockContentItem,
   BedrockStreamState,
 } from './types';
+import {
+  mimeTypeOfName,
+  parseDataUrl,
+  readFilePart,
+  unreadableFileMessage,
+} from '../utils/filePart';
 import { getCachePoint } from './utils/cachePoint';
 import {
-  getBedrockErrorChunk,
   transformAdditionalModelRequestFields,
   transformAI21AdditionalModelRequestFields,
   transformAnthropicAdditionalModelRequestFields,
@@ -137,6 +144,57 @@ const transformAndAppendThinkingMessageItem = (item: ContentType, out: any[]) =>
   }
 };
 
+// What Converse calls each document type, where it is not the MIME subtype.
+const BEDROCK_DOCUMENT_FORMATS: Record<string, string> = {
+  [fileExtensionMimeTypeMap.pdf]: 'pdf',
+  [fileExtensionMimeTypeMap.csv]: 'csv',
+  [fileExtensionMimeTypeMap.doc]: 'doc',
+  [fileExtensionMimeTypeMap.docx]: 'docx',
+  [fileExtensionMimeTypeMap.xls]: 'xls',
+  [fileExtensionMimeTypeMap.xlsx]: 'xlsx',
+  [fileExtensionMimeTypeMap.html]: 'html',
+  [fileExtensionMimeTypeMap.txt]: 'txt',
+  [fileExtensionMimeTypeMap.md]: 'md',
+};
+
+/**
+ * A document's name as Converse will take it: letters and digits, single
+ * spaces, hyphens, parentheses and square brackets, at most 200 of them. A file
+ * name has an extension at the least, and its dot alone was enough for the
+ * request to be refused.
+ */
+const bedrockDocumentName = (name?: string) =>
+  (name ?? '')
+    .replace(/\.[^.]*$/, '')
+    .replace(/[^a-zA-Z0-9\s\-()[\]]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200) || crypto.randomUUID();
+
+const bedrockMediaBlock = (
+  mimeType: string,
+  source: Record<string, unknown>,
+  name?: string,
+): BedrockContentItem => {
+  const subtype = mimeType.split('/')[1];
+
+  if (imagesMimeTypes.includes(mimeType)) {
+    return { image: { format: subtype, source } } as BedrockContentItem;
+  }
+
+  if (videoMimeTypes.includes(mimeType)) {
+    return { video: { format: subtype, source } } as BedrockContentItem;
+  }
+
+  return {
+    document: {
+      format: BEDROCK_DOCUMENT_FORMATS[mimeType] ?? subtype,
+      name: bedrockDocumentName(name),
+      source,
+    },
+  } as BedrockContentItem;
+};
+
 const getMessageContent = (message: Message) => {
   if (!message.content && !message.tool_calls && !message.tool_call_id) return [];
   if (message.role === 'tool') {
@@ -174,85 +232,37 @@ const getMessageContent = (message: Message) => {
       } else if (item.type === 'thinking') {
         transformAndAppendThinkingMessageItem(item, out);
       } else if (item.type === 'image_url' && item.image_url) {
-        const mimetypeParts = item.image_url.url.split(';');
-        const mimeType = mimetypeParts[0].split(':')[1];
-        const fileFormat = mimeType.split('/')[1];
-        const bytes = mimetypeParts[1].split(',')[1];
-        if (imagesMimeTypes.includes(mimeType)) {
-          out.push({
-            image: {
-              source: {
-                bytes,
-              },
-              format: fileFormat,
-            },
-          });
-        } else if (videoMimeTypes.includes(mimeType)) {
-          out.push({
-            video: {
-              format: fileFormat,
-              source: {
-                bytes,
-              },
-            },
-          });
+        const { url } = item.image_url;
+        const dataUrl = parseDataUrl(url);
+        if (dataUrl) {
+          out.push(bedrockMediaBlock(dataUrl.mimeType, { bytes: dataUrl.base64 }));
+        } else if (url.startsWith('s3://')) {
+          const mimeType =
+            item.image_url.mime_type || mimeTypeOfName(url) || fileExtensionMimeTypeMap.jpeg;
+          out.push(bedrockMediaBlock(mimeType, { s3Location: { uri: url } }));
         } else {
-          out.push({
-            document: {
-              format: fileFormat,
-              name: crypto.randomUUID(),
-              source: {
-                bytes,
-              },
-            },
-          });
+          // Read as a data URL regardless, a web address split into nothing and
+          // threw — a 500 for a request whose only fault was where its image was.
+          throw new GatewayError(
+            'Bedrock takes an image as a data URL or an s3:// address, not a web address',
+            400,
+          );
         }
       } else if (item.type === 'file') {
-        const mimeType = item.file?.mime_type || fileExtensionMimeTypeMap.pdf;
-        const fileFormat = mimeType.split('/')[1];
-        if (imagesMimeTypes.includes(mimeType)) {
-          out.push({
-            image: {
-              source: {
-                ...(item.file?.file_data && { bytes: item.file.file_data }),
-                ...(item.file?.file_url && {
-                  s3Location: {
-                    uri: item.file.file_url,
-                  },
-                }),
-              },
-              format: fileFormat,
-            },
-          });
-        } else if (videoMimeTypes.includes(mimeType)) {
-          out.push({
-            video: {
-              format: fileFormat,
-              source: {
-                ...(item.file?.file_data && { bytes: item.file.file_data }),
-                ...(item.file?.file_url && {
-                  s3Location: {
-                    uri: item.file.file_url,
-                  },
-                }),
-              },
-            },
-          });
+        const file = readFilePart(item.file);
+        if (!file) {
+          throw new GatewayError(unreadableFileMessage('bedrock', item.file), 400);
+        }
+
+        if (file.url === undefined) {
+          out.push(bedrockMediaBlock(file.mimeType, { bytes: file.data }, file.name));
+        } else if (file.url.startsWith('s3://')) {
+          out.push(bedrockMediaBlock(file.mimeType, { s3Location: { uri: file.url } }, file.name));
         } else {
-          out.push({
-            document: {
-              format: fileFormat,
-              name: item.file?.file_name || crypto.randomUUID(),
-              source: {
-                ...(item.file?.file_data && { bytes: item.file.file_data }),
-                ...(item.file?.file_url && {
-                  s3Location: {
-                    uri: item.file.file_url,
-                  },
-                }),
-              },
-            },
-          });
+          throw new GatewayError(
+            'Bedrock reads a file from its content or an s3:// address, not a web address',
+            400,
+          );
         }
       }
 
@@ -326,17 +336,16 @@ export const BedrockConverseChatCompleteConfig: ProviderConfig = {
       required: false,
       transform: (params: BedrockChatCompletionsParams) => {
         if (!params.messages) return;
-        const systemMessages: Array<{ text: string } | BedrockCachePoint> =
-          params.messages.reduce(
-            (acc: Array<{ text: string } | BedrockCachePoint>, msg) => {
-              if (SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
-                const content = getMessageTextContentArray(msg);
-                return acc.concat(...content);
-              }
-              return acc;
-            },
-            [],
-          );
+        const systemMessages: Array<{ text: string } | BedrockCachePoint> = params.messages.reduce(
+          (acc: Array<{ text: string } | BedrockCachePoint>, msg) => {
+            if (SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
+              const content = getMessageTextContentArray(msg);
+              return acc.concat(...content);
+            }
+            return acc;
+          },
+          [],
+        );
         if (!systemMessages.length) return;
         return systemMessages;
       },
@@ -508,6 +517,12 @@ export const BedrockChatCompleteResponseTransform: (
     const contentBlocks = !strictOpenAiCompliance
       ? transformContentBlocks(response.output.message.content)
       : undefined;
+    // Reported in `reasoning_content` as every other provider here reports it.
+    // It was only in `content_blocks`, which a strict caller — the default — is
+    // not sent, so the thinking of every reasoner on Converse was dropped.
+    const reasoning = response.output.message.content
+      .map((item) => item.reasoningContent?.reasoningText?.text ?? '')
+      .join('');
 
     const cacheReadInputTokens = response.usage?.cacheReadInputTokens || 0;
     const cacheWriteInputTokens = response.usage?.cacheWriteInputTokens || 0;
@@ -535,6 +550,7 @@ export const BedrockChatCompleteResponseTransform: (
           message: {
             role: 'assistant',
             content,
+            ...(reasoning && { reasoning_content: reasoning }),
             ...(!strictOpenAiCompliance && {
               content_blocks: contentBlocks,
             }),
@@ -588,8 +604,16 @@ export const BedrockChatCompleteStreamChunkTransform: (
   gatewayRequest,
 ) => {
   const parsedChunk: BedrockChatCompleteStreamChunk = parseJson(responseChunk);
+  // An exception Bedrock sends mid-stream — a throttle, a refused image, a model
+  // that failed — was answered with a chunk finishing as `stop` and a `[DONE]`,
+  // its message thrown away: to the caller, a reply that had simply ended there.
+  // It is a failure, and leaves as one, named as Bedrock named it.
   if (parsedChunk.message) {
-    return getBedrockErrorChunk(fallbackId, gatewayRequest.model || '');
+    return openAiErrorEvent({
+      code: parsedChunk.__type ?? null,
+      message: `${BEDROCK} error: ${parsedChunk.message}`,
+      type: parsedChunk.__type ?? 'api_error',
+    });
   }
   if (parsedChunk.stopReason) {
     streamState.stopReason = parsedChunk.stopReason;
@@ -689,6 +713,9 @@ export const BedrockChatCompleteStreamChunkTransform: (
         delta: {
           role: 'assistant',
           content,
+          ...(parsedChunk.delta?.reasoningContent?.text && {
+            reasoning_content: parsedChunk.delta.reasoningContent.text,
+          }),
           ...(!strictOpenAiCompliance &&
             !toolCalls.length &&
             Object.keys(contentBlockObject.delta).length > 0 && {
@@ -834,6 +861,20 @@ export const BedrockConverseAI21ChatCompleteConfig: ProviderConfig = {
   },
 };
 
+/**
+ * A message's content as the text of a prompt, for the models that take one
+ * string rather than messages. The system message was written as the whole
+ * message list, `[object Object],[object Object]`, and content sent as parts
+ * as `[object Object]` wherever it came.
+ */
+const promptText = (content: Message['content']): string =>
+  Array.isArray(content)
+    ? content
+        .map((part) => (part.type === 'text' ? part.text : ''))
+        .filter(Boolean)
+        .join('\n')
+    : (content ?? '');
+
 export const BedrockCohereChatCompleteConfig: ProviderConfig = {
   messages: {
     param: 'prompt',
@@ -844,13 +885,13 @@ export const BedrockCohereChatCompleteConfig: ProviderConfig = {
         let messages: Message[] = params.messages;
         messages.forEach((msg, index) => {
           if (index === 0 && SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
-            prompt += `system: ${messages}\n`;
+            prompt += `system: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'user') {
-            prompt += `user: ${msg.content}\n`;
+            prompt += `user: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'assistant') {
-            prompt += `assistant: ${msg.content}\n`;
+            prompt += `assistant: ${promptText(msg.content)}\n`;
           } else {
-            prompt += `${msg.role}: ${msg.content}\n`;
+            prompt += `${msg.role}: ${promptText(msg.content)}\n`;
           }
         });
         prompt += 'Assistant:';
@@ -1040,13 +1081,13 @@ export const BedrockAI21ChatCompleteConfig: ProviderConfig = {
         let messages: Message[] = params.messages;
         messages.forEach((msg, index) => {
           if (index === 0 && SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
-            prompt += `system: ${messages}\n`;
+            prompt += `system: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'user') {
-            prompt += `user: ${msg.content}\n`;
+            prompt += `user: ${promptText(msg.content)}\n`;
           } else if (msg.role == 'assistant') {
-            prompt += `assistant: ${msg.content}\n`;
+            prompt += `assistant: ${promptText(msg.content)}\n`;
           } else {
-            prompt += `${msg.role}: ${msg.content}\n`;
+            prompt += `${msg.role}: ${promptText(msg.content)}\n`;
           }
         });
         prompt += 'Assistant:';

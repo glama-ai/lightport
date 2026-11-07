@@ -13,9 +13,12 @@ const declare = (overrides: Record<string, any> = {}) =>
   } as any);
 
 const modelSentBy = (config: any) =>
-  transformUsingProviderConfig(config.chatComplete as ProviderConfig, {
-    messages: [{ role: 'user', content: 'hi' }],
-  } as Params).model;
+  transformUsingProviderConfig(
+    config.chatComplete as ProviderConfig,
+    {
+      messages: [{ role: 'user', content: 'hi' }],
+    } as Params,
+  ).model;
 
 describe('the model a request that names none is sent with', () => {
   it('is the one the provider named', () => {
@@ -35,10 +38,13 @@ describe('the model a request that names none is sent with', () => {
 
   it('is still the one the caller named, when they named one', () => {
     const config = declare();
-    const sent = transformUsingProviderConfig(config.chatComplete as ProviderConfig, {
-      model: 'something-else',
-      messages: [{ role: 'user', content: 'hi' }],
-    } as Params);
+    const sent = transformUsingProviderConfig(
+      config.chatComplete as ProviderConfig,
+      {
+        model: 'something-else',
+        messages: [{ role: 'user', content: 'hi' }],
+      } as Params,
+    );
 
     expect(sent.model).toBe('something-else');
   });
@@ -51,9 +57,12 @@ describe('the model a request that names none is sent with', () => {
       },
     });
 
-    const sent = transformUsingProviderConfig(config.embed as ProviderConfig, {
-      input: 'hi',
-    } as Params);
+    const sent = transformUsingProviderConfig(
+      config.embed as ProviderConfig,
+      {
+        input: 'hi',
+      } as Params,
+    );
 
     expect(sent.model).toBe('test-embed');
   });
@@ -115,16 +124,23 @@ describe('what a declared provider is sent', () => {
   it('leaves out the parameters the provider does not take', () => {
     const config = declare({
       endpoints: {
-        chatComplete: { path: '/v1/chat/completions', defaultModel: 'test-small', exclude: ['tools', 'seed'] },
+        chatComplete: {
+          path: '/v1/chat/completions',
+          defaultModel: 'test-small',
+          exclude: ['tools', 'seed'],
+        },
       },
     });
 
-    const sent = transformUsingProviderConfig(config.chatComplete as ProviderConfig, {
-      messages: [{ role: 'user', content: 'hi' }],
-      seed: 1,
-      tools: [{ type: 'function', function: { name: 'f' } }],
-      temperature: 0.5,
-    } as Params);
+    const sent = transformUsingProviderConfig(
+      config.chatComplete as ProviderConfig,
+      {
+        messages: [{ role: 'user', content: 'hi' }],
+        seed: 1,
+        tools: [{ type: 'function', function: { name: 'f' } }],
+        temperature: 0.5,
+      } as Params,
+    );
 
     expect(sent).not.toHaveProperty('tools');
     expect(sent).not.toHaveProperty('seed');

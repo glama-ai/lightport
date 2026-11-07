@@ -31,6 +31,8 @@ interface StreamState {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
   finishReason: string | null;
   sequenceNumber: number;
   accumulatedText: string;
@@ -125,9 +127,9 @@ function buildResponseSnapshot(
     reasoning: null,
     usage: {
       input_tokens: state.inputTokens,
-      input_tokens_details: { cached_tokens: 0 },
+      input_tokens_details: { cached_tokens: state.cachedTokens },
       output_tokens: state.outputTokens,
-      output_tokens_details: { reasoning_tokens: 0 },
+      output_tokens_details: { reasoning_tokens: state.reasoningTokens },
       total_tokens: state.inputTokens + state.outputTokens,
     },
     max_output_tokens: null,
@@ -519,6 +521,11 @@ export function transformStreamChunk(chunk: string, state: StreamState): string 
   if (parsed.usage) {
     state.inputTokens = parsed.usage.prompt_tokens || 0;
     state.outputTokens = parsed.usage.completion_tokens || 0;
+    // Read as the non-streamed translation reads them. Written as zero, a cache
+    // hit or a reasoner's thinking was reported as never having happened on
+    // the one path whose caller saw the tokens arrive.
+    state.cachedTokens = parsed.usage.prompt_tokens_details?.cached_tokens || 0;
+    state.reasoningTokens = parsed.usage.completion_tokens_details?.reasoning_tokens || 0;
   }
 
   // Track finish reason
@@ -546,6 +553,8 @@ export function createStreamState(): StreamState {
     model: '',
     inputTokens: 0,
     outputTokens: 0,
+    cachedTokens: 0,
+    reasoningTokens: 0,
     finishReason: null,
     sequenceNumber: 0,
     accumulatedText: '',

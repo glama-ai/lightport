@@ -103,10 +103,19 @@ export const AzureOpenAIFinetuneResponseTransform = (
   return _response;
 };
 
+/**
+ * The `model` Azure is sent, which is the deployment's name rather than the
+ * model's wherever Azure reads it.
+ *
+ * Azure reads it wherever the address does not already name the deployment:
+ * every route of the `v1` API, and the Responses API on a dated version, whose
+ * address is `/openai/responses` with no deployment in it. The model's own name
+ * was sent there, so a deployment named anything but its model answered
+ * DeploymentNotFound to a Responses request while chat — whose address names it
+ * — worked; and `v1` without a deployment id sent no model at all. A dated
+ * route that names the deployment ignores the field, so the one rule serves
+ * every route.
+ */
 export const getAzureModelValue = (params: Params, providerOptions?: Options) => {
-  const { apiVersion: azureApiVersion, deploymentId: azureDeploymentName } = providerOptions ?? {};
-  if (azureApiVersion && azureApiVersion.trim() === 'v1') {
-    return azureDeploymentName;
-  }
-  return params.model || '';
+  return providerOptions?.deploymentId || params.model || '';
 };
