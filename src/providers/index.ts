@@ -1,5 +1,6 @@
 import { LAMBDA } from '../globals';
 import AI302Config from './302ai';
+import AceDataCloudConfig from './acedatacloud';
 import AI21Config from './ai21';
 import AIBadgrConfig from './aibadgr';
 import AnthropicConfig from './anthropic';
@@ -81,6 +82,7 @@ import ZhipuConfig from './zhipu';
 
 const Providers: { [key: string]: ProviderConfigs } = {
   openai: OpenAIConfig,
+  acedatacloud: AceDataCloudConfig,
   cohere: CohereConfig,
   anthropic: AnthropicConfig,
   'azure-openai': AzureOpenAIConfig,

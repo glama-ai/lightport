@@ -15,7 +15,7 @@ Retries, secret management, caching, rate limiting, and other operational concer
 - `POST /v1/responses` (+ GET, DELETE, input_items)
 - `POST /v1/images/generations` (served by the providers that offer image generation — OpenAI, Azure OpenAI, OpenRouter, Bedrock, Vertex AI, Stability AI and others; the rest answer 400)
 
-**Supported providers:** OpenAI, Anthropic, Azure OpenAI, Google Gemini, Vertex AI, Bedrock, Cohere, Mistral, Groq, Deepseek, Together AI, Fireworks, Ollama, and [more](src/providers/) (77 total).
+**Supported providers:** Ace Data Cloud, OpenAI, Anthropic, Azure OpenAI, Google Gemini, Vertex AI, Bedrock, Cohere, Mistral, Groq, Deepseek, Together AI, Fireworks, Ollama, and [more](src/providers/) (78 total).
 
 ## Background
 
@@ -58,6 +58,42 @@ curl http://localhost:8787/v1/chat/completions \
 ```
 
 Set the provider via `x-lightport-provider` header and pass credentials via `Authorization` (or provider-specific headers like `x-api-key` for Anthropic).
+
+### Ace Data Cloud
+
+Choose the registered provider `acedatacloud`; no custom host is required.
+Lightport routes chat completions to `https://api.acedata.cloud/openai/chat/completions`
+with the caller's Bearer credential. Select a model explicitly: this provider
+has no default paid model. Streaming and tool calls use the chat-completions
+contract. It does not advertise native Responses, embeddings, or media endpoints;
+unsupported endpoints are not silently rerouted to another provider.
+
+Obtain an API Token from [Ace Data Cloud Applications](https://platform.acedata.cloud/console/applications?utm_source=opensource&utm_medium=referral&utm_campaign=evergreen&utm_content=lightport_readme_api_key):
+register/sign in, initialize General application if necessary, copy a key or
+create a dedicated key, and check its API access, expiration, usage cap and balance.
+The redacted screenshots below show the real Ace Applications key-copy and
+credential-creation controls. They come from the [SunoDify onboarding guide](https://github.com/AceDataCloud/SunoDify/blob/8d3d03570e73324220f111f7fe343da0792a8071/README.md),
+checked 2026-10-18. The example key name is from that source; choose a dedicated
+Lightport name. These are Ace account screens, not a Glama model-menu screenshot.
+
+![Copy a redacted Ace application API key](https://raw.githubusercontent.com/AceDataCloud/SunoDify/8d3d03570e73324220f111f7fe343da0792a8071/_assets/tutorial/get-api-key-en.png)
+
+![Create an optional dedicated Ace API credential](https://raw.githubusercontent.com/AceDataCloud/SunoDify/8d3d03570e73324220f111f7fe343da0792a8071/_assets/tutorial/create-api-key-en.png)
+
+Use the generation API Token, not a platform-management token. API calls may be
+billed at the [current model price](https://platform.acedata.cloud/models?utm_source=opensource&utm_medium=referral&utm_campaign=evergreen&utm_content=lightport_readme_pricing).
+
+```bash
+curl http://localhost:8787/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "x-lightport-provider: acedatacloud" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -d '{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+This is a native Lightport provider entry. Its presence in the open-source
+registry does not establish inclusion in Glama's hosted model menu, which has
+its own curated provider policy.
 
 ### Provider-specific headers
 
